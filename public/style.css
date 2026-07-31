@@ -194,6 +194,12 @@ html, body {
   display: flex; flex-direction: column; justify-content: space-between;
 }
 .card:disabled { opacity: 0.3; }
+.card.dead {
+  opacity: 0.4;
+  border-style: dashed;
+  background: transparent;
+}
+.card.dead .ctag { color: var(--bad); }
 .card .ctag { font-size: 10px; color: var(--dim); font-weight: 400; }
 .card.atk { border-color: var(--danger); }
 .card.def { border-color: var(--cat); }

@@ -149,6 +149,94 @@ me which ones matter enough to prioritise once the core loop has been
 played a few times; that'll be a better prioritisation signal than guessing
 now.
 
+## Fixed since last handoff — three real bugs, from one bug report
+
+**1. Starting hand was averaging ~5 cards, not 7.** `startGame()` drew
+exactly 7 raw cards per player and discarded any that turned out to be rats
+or WD cards instead of drawing past them — with ~23% of the deck being
+rats/WD, hands were consistently short. Now draws UNTIL 7 real cards land
+in hand, matching the validated Python sim's setup logic exactly.
+
+*Note, not a bug:* whichever player goes first will show 8 cards right
+after setup, not 7. That's correct — "draw 1 at start of turn" applies to
+turn one the same as every other turn, so the first active player's
+opening draw stacks on top of their dealt hand until they play something
+down. Matches the Python sim's behaviour; don't "fix" this later.
+
+**2. Bots attacked kitchens with nothing in them.** Target selection for
+Health Inspection, HCV, Exterminator, Hot Chilli, and The Sweep just picked
+"the leader" with no check that they had any rats at all — near-universal
+early game, when everyone's still at zero. Bots now filter to opponents who
+actually have something at stake before choosing among them.
+
+**3. The freeze — this was the serious one.** The reaction modal had a real
+logic bug: a line meant to conditionally hide the generic Cancel button
+always evaluated to "show it" (`cond ? false : false` — both branches
+return `false`), regardless of context. So every attack-reaction prompt
+showed a stray Cancel that just closed the modal without telling the server
+anything. Combined with bug #2 (a pointless attack on an empty kitchen,
+where the only *real* option was "Take it" for a no-op), Cancel was the
+obviously intuitive tap — and it left `pendingAttack` set forever, which
+blocks every other action.
+
+Two layers of fix, not one:
+- **Root cause (#2):** an attack against a target with nothing at stake now
+  resolves immediately with no reaction prompt at all — nothing to react to.
+- **The actual bug (#3):** the modal's cancel logic is fixed, and the two
+  *forced* prompts (attack response, trap decision) no longer show a
+  generic Cancel at all — "Take it" / "Let it go" are already the built-in
+  no-op choice, so a second silent dismiss route has no reason to exist.
+- **Defence in depth:** a server-side timeout (`REACT_TIMEOUT_MS`,
+  `TRAP_DECISION_TIMEOUT_MS`, both env-configurable) now backstops EVERY
+  pending attack/trap, human or bot, armed and cleared centrally on every
+  state broadcast. This is the piece that was silently dropped when the
+  server was rewritten for bots — the bot-turn scheduler had its own fast
+  timer, but nothing existed for humans. If a client bug like #3 ever
+  recurs, the server now rescues the game on its own rather than hanging
+  forever.
+
+Verified: hand sizes correct across 2P-8P, an empty-kitchen HI fizzles with
+zero reaction prompt, `resolveAttack()` (exactly what the timeout calls)
+confirmed to correctly resolve and unstick the turn, and 9 full bot games
+re-run across 2P/4P/8P post-fix with no regressions.
+
+## Card legality — one module, three consumers
+
+`game/legality.js` is the single source of truth for two questions: can this
+card be played at all, and if it needs a target, which targets are legal.
+
+It is consumed by **the server** (authoritative rejection in
+`engine.playCard`), **the client** (greys out dead cards, and target pickers
+only ever list legal targets), and **the bots** (they can't even consider an
+illegal move). It's served to the browser from `game/` via an explicit route
+rather than copied into `public/` — two copies would drift, which is the
+exact bug class it exists to prevent.
+
+**Why this replaced the previous approach.** Legality rules used to be
+scattered across bot targeting, server validation and client UI, each with
+its own partial idea of what was allowed. Fixing bot targeting therefore
+didn't stop humans being attacked by cards that couldn't do anything. The
+earlier "fizzle" fix was also wrong in kind: it let the nonsense play happen
+and merely made it quiet — the card was still consumed and a reaction prompt
+still opened. Now an unplayable card is **rejected**: not consumed, no
+prompt, nothing resolves.
+
+Current rules:
+
+| Card | Requires |
+|---|---|
+| Health Inspection, HCV, Exterminator, Hot Chilli, The Sweep | a target with at least one rat |
+| Hot Ratato (steal) | a target with a good rat, not shielded |
+| Hot Ratato (dump) | you hold a bad rat |
+| Kleptomaniac, Shakedown, Rat Pack | a target holding cards |
+| Switcheroo | a kitchen different from yours |
+| Rat Trap | a kitchen not already trapped |
+| Bolt Hole | you have a rat to protect |
+| Food, shields, draw/dig cards | always playable |
+
+If you add or change a card, change it **here** and all three consumers
+follow automatically.
+
 ## The bots
 
 Ported directly from the Python balance sim's heuristic policy — the same

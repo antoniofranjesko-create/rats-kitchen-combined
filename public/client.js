@@ -29,8 +29,11 @@ const BLURB = {
   big_cheese: "Dig for rats", bun_in_oven: "A rat next turn", tag: "Redirect next HI",
 };
 const ATTACKS = new Set(["hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep"]);
-const REACTIVE = new Set(["wok_block", "sleeper", "snitch"]);
-const NEEDS_TARGET = new Set([...ATTACKS, "switcheroo", "tag", "kleptomaniac", "shakedown", "rat_pack"]);
+const REACTIVE = RKLegality.REACTIVE;
+// NOTE: legality now comes from the SHARED module (game/legality.js), the
+// same file the server and bots use. Don't reintroduce local rules here —
+// three divergent copies of "what's legal" is exactly what caused players
+// being attacked by cards that couldn't do anything.
 const CARD_CLASS = (t) =>
   ATTACKS.has(t) ? "atk" : REACTIVE.has(t) || t === "bolt_hole" || t === "territorial" || t === "board_up"
     ? "def" : "eco";
@@ -57,7 +60,7 @@ function toast(msg) {
 function handle(res) { if (res && res.error) toast(res.error); }
 
 // ── modal ────────────────────────────────────────────────────────────────
-function openModal(title, body, options, onCancel) {
+function openModal(title, body, options, { hideCancel = false, onCancel } = {}) {
   $("modalTitle").textContent = title;
   $("modalBody").textContent = body || "";
   const wrap = $("modalOptions");
@@ -70,7 +73,14 @@ function openModal(title, body, options, onCancel) {
     b.onclick = () => { closeModal(); o.action(); };
     wrap.appendChild(b);
   });
-  $("modalCancel").classList.toggle("hidden", !onCancel && options.length === 0 ? false : false);
+  // FORCED prompts (hideCancel: true) have no dismiss route other than
+  // picking one of the real options — this is what the freeze bug needed.
+  // The previous toggle logic here was broken (`cond ? false : false`
+  // always evaluates to "not hidden"), so Cancel was ALWAYS visible,
+  // including on the attack-reaction prompt, where tapping it closed the
+  // modal without ever telling the server — pendingAttack then sat forever
+  // with no client-side way to clear it.
+  $("modalCancel").classList.toggle("hidden", hideCancel);
   $("modalCancel").onclick = () => { closeModal(); onCancel && onCancel(); };
   $("modal").classList.remove("hidden");
 }
@@ -229,12 +239,19 @@ function renderHand() {
   $("handMeta").innerHTML =
     `<span>Your hand · ${hand.length}</span><span>Deck ${state.deckCount}</span>`;
 
-  $("hand").innerHTML = hand.map((c) => `
-    <button class="card ${CARD_CLASS(c.type)}" data-cid="${c.id}" data-ctype="${c.type}"
-      ${myTurn && !locked ? "" : "disabled"}>
+  $("hand").innerHTML = hand.map((c) => {
+    const playable = RKLegality.isPlayable(c.type, state, myId);
+    const dead = !playable;
+    const reason = dead ? RKLegality.whyNot(c.type, state, myId) : "";
+    return `
+    <button class="card ${CARD_CLASS(c.type)}${dead ? " dead" : ""}"
+      data-cid="${c.id}" data-ctype="${c.type}" data-dead="${dead ? 1 : 0}"
+      data-reason="${esc(reason)}"
+      ${myTurn && !locked && playable ? "" : "disabled"}>
       <span>${LABELS[c.type] || c.type}</span>
-      <span class="ctag">${BLURB[c.type] || ""}</span>
-    </button>`).join("");
+      <span class="ctag">${dead ? esc(reason) : (BLURB[c.type] || "")}</span>
+    </button>`;
+  }).join("");
 
   document.querySelectorAll("#hand .card").forEach((b) => {
     b.onclick = () => onCardTap(b.dataset.cid, b.dataset.ctype);
@@ -249,48 +266,57 @@ function pickPlayer(title, body, list, cb) {
     label: p.name,
     sub: `${p.score}/3 good · ${p.badScore}/3 bad · ${p.hp} HP`,
     action: () => cb(p.id),
-  })), () => {});
+  })), { onCancel: () => {} });
+}
+
+function targetsFor(type, opts) {
+  const ids = RKLegality.legalTargets(type, state, myId, opts) || [];
+  return state.players.filter((p) => ids.includes(p.id));
 }
 
 function onCardTap(cardId, type) {
   if (REACTIVE.has(type)) {
     return toast("Hold this — you'll be offered it when attacked");
   }
-  const others = state.players.filter((p) => p.alive && p.id !== myId);
+  if (!RKLegality.isPlayable(type, state, myId)) {
+    return toast(RKLegality.whyNot(type, state, myId));
+  }
 
   if (type === "food") {
     return openModal("Food", "How do you want to use it?", [
       { label: "Heal 1 HP", action: () => play(cardId, null, { use: "heal" }) },
       { label: "Discard", sub: "Just get rid of it", action: () => play(cardId, null, { use: "discard" }) },
-    ], () => {});
+    ], { onCancel: () => {} });
   }
 
   if (type === "hot_ratato") {
-    return openModal("Hot Ratato", "Steal a good rat, or dump a bad one?", [
-      {
-        label: "Steal a good rat",
-        sub: "Take one from their kitchen",
-        action: () => pickPlayer("Steal from…", "", others.filter((p) => !p.shielded),
-          (id) => play(cardId, id, { mode: "steal" })),
-      },
-      {
-        label: "Dump a bad rat",
-        sub: "Give one of yours away",
-        action: () => pickPlayer("Dump onto…", "", others,
-          (id) => play(cardId, id, { mode: "dump" })),
-      },
-    ], () => {});
+    const stealTargets = targetsFor(type, { mode: "steal" });
+    const dumpTargets = targetsFor(type, { mode: "dump" });
+    const modes = [];
+    if (stealTargets.length) modes.push({
+      label: "Steal a good rat", sub: "Take one from their kitchen",
+      action: () => pickPlayer("Steal from…", "", stealTargets,
+        (id) => play(cardId, id, { mode: "steal" })),
+    });
+    if (dumpTargets.length) modes.push({
+      label: "Dump a bad rat", sub: "Give one of yours away",
+      action: () => pickPlayer("Dump onto…", "", dumpTargets,
+        (id) => play(cardId, id, { mode: "dump" })),
+    });
+    if (modes.length === 1) return modes[0].action();   // no pointless choice
+    return openModal("Hot Ratato", "Steal a good rat, or dump a bad one?",
+      modes, { onCancel: () => {} });
   }
 
   if (type === "rat_trap") {
-    const all = state.players.filter((p) => p.alive && !p.trapped);
-    return pickPlayer("Set the trap on…", "Catches the next rat they DRAW. You choose whether to keep it.",
-      all, (id) => play(cardId, id, {}));
+    return pickPlayer("Set the trap on…",
+      "Catches the next rat they DRAW. You choose whether to keep it.",
+      targetsFor(type), (id) => play(cardId, id, {}));
   }
 
-  if (NEEDS_TARGET.has(type)) {
-    return pickPlayer(LABELS[type] || type, BLURB[type] || "", others,
-      (id) => play(cardId, id, {}));
+  if (RKLegality.needsTarget(type)) {
+    return pickPlayer(LABELS[type] || type, BLURB[type] || "",
+      targetsFor(type), (id) => play(cardId, id, {}));
   }
 
   play(cardId, null, {});
@@ -317,7 +343,7 @@ function renderPrompts() {
     });
     return openModal(
       `Incoming ${LABELS[state.pendingAttack.cardType] || ""}`,
-      `From ${nameOf(state.pendingAttack.attackerId)}`, opts);
+      `From ${nameOf(state.pendingAttack.attackerId)}`, opts, { hideCancel: true });
   }
 
   if (state.pendingTrap && state.pendingTrap.trapOwnerId === myId) {
@@ -329,7 +355,7 @@ function renderPrompts() {
         action: () => socket.emit("trapDecision", { keep: true }, handle) },
       { label: "Let it go", sub: "Back under the deck",
         action: () => socket.emit("trapDecision", { keep: false }, handle) },
-    ]);
+    ], { hideCancel: true });
   }
 
   closeModal();

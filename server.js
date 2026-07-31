@@ -11,6 +11,15 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, "public")));
+
+// Serve the SINGLE legality module to the browser. Deliberately served from
+// game/ rather than copied into public/ — two copies of the ruleset would
+// drift, which is the exact class of bug this module exists to kill.
+app.get("/legality.js", (_req, res) => {
+  res.type("application/javascript");
+  res.sendFile(path.join(__dirname, "game", "legality.js"));
+});
+
 app.get("/healthz", (_req, res) => res.send("ok"));
 
 const PORT = process.env.PORT || 3000;
@@ -63,7 +72,52 @@ function broadcastState(code) {
       io.to(seat.socketId).emit("state", engine.publicView(room.game, seat.id));
     }
   }
+  armSafetyTimers(code);   // human fallback — bots resolve via scheduleBotWork below
   scheduleBotWork(code);
+}
+
+/**
+ * Server-side backstop for pendingAttack/pendingTrap. Called on every
+ * broadcast, so it can't be forgotten again by a future rewrite the way it
+ * was dropped when this file was rebuilt for bots/lobby: whatever the
+ * client does or fails to do, the game can never hang on a human forever.
+ * Bots resolve fast via scheduleBotWork; this is purely a backstop and is
+ * a no-op once anything else has already resolved the pending item.
+ */
+function armSafetyTimers(code) {
+  const room = rooms.get(code);
+  if (!room || !room.game) return;
+  const game = room.game;
+
+  if (game.pendingAttack) {
+    if (!room.attackTimer) {
+      room.attackTimer = setTimeout(() => {
+        room.attackTimer = null;
+        if (room.game.pendingAttack) {
+          engine.resolveAttack(room.game);
+          broadcastState(code);
+        }
+      }, engine.REACT_TIMEOUT_MS);
+    }
+  } else if (room.attackTimer) {
+    clearTimeout(room.attackTimer);
+    room.attackTimer = null;
+  }
+
+  if (game.pendingTrap) {
+    if (!room.trapTimer) {
+      room.trapTimer = setTimeout(() => {
+        room.trapTimer = null;
+        if (room.game.pendingTrap) {
+          engine.resolveTrapDecision(room.game, false);   // auto-discard on timeout
+          broadcastState(code);
+        }
+      }, engine.TRAP_DECISION_TIMEOUT_MS);
+    }
+  } else if (room.trapTimer) {
+    clearTimeout(room.trapTimer);
+    room.trapTimer = null;
+  }
 }
 
 function clearTimers(room) {

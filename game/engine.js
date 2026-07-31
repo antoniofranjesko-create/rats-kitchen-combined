@@ -15,14 +15,15 @@
  */
 
 const { buildDeck, shuffle, uid, REACTIVE_CARDS, WD_CARDS, CARD_LABELS } = require("./deck");
+const legality = require("./legality");
 
 const HAND_SIZE = 7;
 const START_HP = 3;
 const WIN_GOOD = 3;
 const LOSE_BAD = 3;
 const CAT_COUNT = 2;
-const REACT_TIMEOUT_MS = 20000;
-const TRAP_DECISION_TIMEOUT_MS = 15000;
+const REACT_TIMEOUT_MS = parseInt(process.env.REACT_TIMEOUT_MS || "20000", 10);
+const TRAP_DECISION_TIMEOUT_MS = parseInt(process.env.TRAP_DECISION_TIMEOUT_MS || "15000", 10);
 
 function newPlayer(id, name, isBot) {
   return {
@@ -92,10 +93,14 @@ function badScore(p) {
 function startGame(game) {
   game.deck = shuffle(buildDeck(game.players.length));
   for (const p of game.players) {
-    for (let i = 0; i < HAND_SIZE; i++) {
+    // draw UNTIL 7 real cards land in hand — rats/WD drawn during setup are
+    // binned and DON'T count toward the 7 (matches the validated Python sim's
+    // _deal(); a bounded for-loop here was the bug — it shorted every hand by
+    // however many rat/WD cards it happened to draw, averaging ~5 not 7).
+    let guard = 0;
+    while (p.hand.length < HAND_SIZE && guard++ < 500) {
       const c = drawRaw(game);
       if (!c) break;
-      // setup draws never resolve rats/WD live — bin them, matching v11
       if (c.type === "rat" || WD_CARDS.has(c.type)) {
         game.discard.push(c);
       } else {
@@ -360,6 +365,20 @@ function playCard(game, playerId, cardId, opts = {}) {
   const idx = p.hand.findIndex((c) => c.id === cardId);
   if (idx === -1) return { error: "card not in hand" };
   const card = p.hand[idx];
+
+  // AUTHORITATIVE LEGALITY GATE. A card that can't accomplish anything is
+  // not playable — it is NOT consumed, no prompt opens, nothing resolves.
+  // (This replaces the old "fizzle" behaviour, which still burned the card
+  // and still opened a reaction prompt for an attack that could do nothing.)
+  if (!legality.isPlayable(card.type, game, p.id)) {
+    return { error: legality.whyNot(card.type, game, p.id) };
+  }
+  if (legality.needsTarget(card.type)) {
+    const legal = legality.legalTargets(card.type, game, p.id, opts);
+    if (!legal.includes(opts.targetId)) {
+      return { error: "Not a legal target for that card" };
+    }
+  }
 
   if (ATTACK_CARDS.has(card.type)) {
     const target = findPlayer(game, opts.targetId);
@@ -661,7 +680,7 @@ function publicView(game, forId) {
 
 module.exports = {
   CARD_LABELS, ATTACK_CARDS, REACTIVE_CARDS, newPlayer, score, badScore,
-  ensureTurnPlayable,
+  ensureTurnPlayable, legality,
   createGame, startGame, playCard, endTurn, removeCat,
   respondToAttack, resolveAttack, resolveTrapDecision,
   publicView, findPlayer, activePlayer,

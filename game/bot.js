@@ -7,7 +7,8 @@
  * Turf Wars reference bots.)
  */
 
-const REACTIVE = new Set(["wok_block", "sleeper", "snitch"]);
+const legality = require("./legality");
+const REACTIVE = legality.REACTIVE;
 
 // higher = played sooner. 0 or absent = never played proactively.
 const PRIORITY = {
@@ -42,15 +43,19 @@ function badScore(p) {
   return p.badRats.reduce((s, r) => s + r.weight, 0);
 }
 
-/** Pick the most threatening opponent: closest to winning, then most rats. */
-function pickTarget(game, me) {
-  const opps = game.players.filter((p) => p.alive && p.id !== me.id);
-  if (!opps.length) return null;
-  return opps.reduce((best, p) => {
+function pickFrom(pool) {
+  if (!pool.length) return null;
+  return pool.reduce((best, p) => {
     const v = score(p) * 2 + p.goodRats.length * 0.5;
     const bv = score(best) * 2 + best.goodRats.length * 0.5;
     return v > bv ? p : best;
   });
+}
+
+/** Pick the most threatening opponent: closest to winning, then most rats. */
+function pickTarget(game, me) {
+  const opps = game.players.filter((p) => p.alive && p.id !== me.id);
+  return pickFrom(opps);
 }
 
 /**
@@ -76,8 +81,8 @@ function decideTurnAction(game, me) {
     return { kind: "play", cardId: foods[0].id, opts: { use: "heal" } };
   }
 
-  // 3. best-priority playable card
-  const target = pickTarget(game, me);
+  // 3. best-priority LEGAL card — legality.js decides what's playable,
+  //    so a bot can never attempt a move a human would be blocked from.
   const candidates = me.hand
     .filter((c) => !REACTIVE.has(c.type))
     .map((c) => ({ card: c, pri: PRIORITY[c.type] || 0 }))
@@ -85,53 +90,36 @@ function decideTurnAction(game, me) {
     .sort((a, b) => b.pri - a.pri);
 
   for (const { card } of candidates) {
-    const t = chooseTargetFor(card.type, game, me, target);
-    if (t === undefined) continue;    // no legal target -> skip this card
+    const type = card.type;
     const opts = {};
-    if (card.type === "hot_ratato") {
-      // dump a bad rat if we're near the loss threshold, else steal
-      opts.mode = badScore(me) >= 2 && me.badRats.length ? "dump" : "steal";
+
+    if (type === "hot_ratato") {
+      // prefer dumping when close to the loss threshold, else steal —
+      // but only pick a mode that's actually legal
+      const dumpLegal = legality.legalTargets(type, game, me.id, { mode: "dump" });
+      const stealLegal = legality.legalTargets(type, game, me.id, { mode: "steal" });
+      const wantDump = badScore(me) >= 2 && dumpLegal.length > 0;
+      if (wantDump) opts.mode = "dump";
+      else if (stealLegal.length) opts.mode = "steal";
+      else if (dumpLegal.length) opts.mode = "dump";
+      else continue;
     }
-    return { kind: "play", cardId: card.id, targetId: t, opts };
+
+    if (!legality.isPlayable(type, game, me.id)) continue;
+
+    if (legality.needsTarget(type)) {
+      const legal = legality.legalTargets(type, game, me.id, opts);
+      if (!legal.length) continue;
+      const pool = game.players.filter((p) => legal.includes(p.id));
+      // for a trap, prefer the leader; otherwise most threatening legal target
+      const pick = pickFrom(pool) || pool[0];
+      return { kind: "play", cardId: card.id, targetId: pick.id, opts };
+    }
+
+    return { kind: "play", cardId: card.id, targetId: null, opts };
   }
 
   return { kind: "end" };
-}
-
-/** Returns a target id, null if the card needs none, or undefined if unplayable. */
-function chooseTargetFor(type, game, me, leader) {
-  const opps = game.players.filter((p) => p.alive && p.id !== me.id);
-  switch (type) {
-    case "hi":
-    case "hcv":
-    case "exterminator":
-    case "hot_chilli":
-    case "the_sweep":
-    case "switcheroo":
-    case "tag":
-      return leader ? leader.id : undefined;
-    case "hot_ratato": {
-      if (badScore(me) >= 2 && me.badRats.length) return leader ? leader.id : undefined;
-      const withRats = opps.filter((p) => p.goodRats.length && !p.shielded);
-      if (!withRats.length) return undefined;
-      return withRats.reduce((a, b) => (b.goodRats.length > a.goodRats.length ? b : a)).id;
-    }
-    case "kleptomaniac":
-    case "shakedown":
-    case "rat_pack": {
-      const withCards = opps.filter((p) => p.hand.length);
-      if (!withCards.length) return undefined;
-      return withCards.reduce((a, b) => (b.hand.length > a.hand.length ? b : a)).id;
-    }
-    case "rat_trap": {
-      // trap the leader if they're untrapped, else trap ourselves
-      if (leader && !leader.trapOwner) return leader.id;
-      if (!me.trapOwner) return me.id;
-      return undefined;
-    }
-    default:
-      return null;   // self-targeting / no target needed
-  }
 }
 
 /** Bot reacting to an incoming attack. Returns a cardId to react with, or null. */
