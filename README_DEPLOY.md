@@ -1,14 +1,30 @@
 # Rat's Kitchen Combined — online playtest prototype
 
 Server-authoritative Node/Express/Socket.io game, plain-JS client (no build
-step). Same stack family as your existing Turf Wars prototype, so this can
-either replace it or run alongside it as a second Render service.
+step). Same lobby model as the Turf Wars prototype: **seats you fill with
+bots or humans**, mobile-first UI, session rejoin.
 
-Tested end-to-end before hand-off: 3 headless full games (3-player) and 3
-more at 8-player, driven over real Socket.io connections with randomised
-legal actions, zero server errors, zero crashes, real winners reached every
-time. That confirms the plumbing — it does NOT confirm balance or fun;
-that's what this build is for.
+**Deliberately NOT copied from Turf Wars:** React-via-CDN with inline Babel.
+That's what caused the blank-screen deploy failure there — a single missing
+comma broke the whole script block before React could render. This is plain
+JS: no build step, no transpiler, no single-syntax-error-kills-everything
+failure mode.
+
+Tested end-to-end before hand-off over real Socket.io connections:
+9 full games across 2P, 4P and 8P (1 human + 1/3/7 bots), plus 40 games
+driven directly against the engine. All reached a winner; zero crashes.
+
+One real bug was found and fixed during that testing, worth knowing about
+because it could recur if you extend the turn logic: if a player DIED
+DURING THEIR OWN TURN (a bad rat pushing them to the loss threshold
+mid-turn), the turn pointer stayed on the dead player forever and the game
+froze permanently. `beginTurn` only skips players who were already dead when
+it ran. The fix is `engine.ensureTurnPlayable()`, called on every state
+broadcast. **Any new code path that can kill the active player mid-turn must
+not bypass it.**
+
+That confirms the plumbing. It does NOT confirm balance or fun — that's what
+this build is for.
 
 ---
 
@@ -71,8 +87,23 @@ directory setting in Step 4 accordingly.
 ## STEP 5 — Run a playtest
 
 Share the Render URL. One person creates a room and reads out the 4-letter
-code; everyone else joins on their own phone or laptop. No installs, no
-accounts.
+code; everyone else joins on their own phone. No installs, no accounts.
+
+**You don't need other people to start testing.** Create a room, tap
+**+ Add bot** until the table's the size you want (2-8 seats), hit Start.
+Bots play immediately. Add real players to any remaining seats — a table
+can be any mix of humans and bots.
+
+**Bot speed** is tunable via a Render environment variable if turns feel too
+slow or too frantic to follow:
+- `BOT_THINK_MS` (default 900) — pause before a bot takes an action
+- `BOT_REACT_MS` (default 700) — pause before a bot answers an attack
+
+Set them under the service's **Environment** tab. Lower = faster games.
+
+**Refreshing is safe mid-game** — your seat is held and you'll rejoin
+automatically via sessionStorage. Closing the tab before the game starts
+drops your seat.
 
 ---
 
@@ -118,18 +149,34 @@ me which ones matter enough to prioritise once the core loop has been
 played a few times; that'll be a better prioritisation signal than guessing
 now.
 
+## The bots
+
+Ported directly from the Python balance sim's heuristic policy — the same
+logic the 300-games-per-config sweeps were validated against, so bot games
+should land in roughly the same pace band the docs predict.
+
+They are **greedy, not clever**: they always target whoever is closest to
+winning, hold reactive cards until attacked, spend Food on healing when hurt
+and on shedding a Cat when blocked, and never voluntarily keep a bad rat
+from a trap. Good enough to validate pace and let you test solo. Not good
+enough to ship as a "play vs AI" mode — same caveat as the Turf Wars bots.
+
+Bot logic lives in `game/bot.js`, entirely in the `PRIORITY` table and
+`chooseTargetFor()`. Reordering that table changes how bots play without
+touching the engine.
+
 ## Known rough edges (playtest-scale, not production-scale)
 
-- Target selection uses a browser `prompt()` dialog — functional, ugly.
-  Fine for a first playtest; first thing to replace with real UI if this
-  goes further.
-- No reconnect handling — if someone's tab closes mid-game before it
-  starts, they're dropped from the lobby; mid-game disconnects just leave
-  their seat unresponsive (their turn will eventually time out on any
-  attack/trap prompt, but they won't auto-skip their own turn).
-- No persistence — a Render restart (free-tier idle sleep counts) loses
-  any in-progress game. Fine for one-sitting playtests, not for a game left
-  running overnight.
-- `removeCat` isn't restricted to your own turn — deliberate, so a blocked
-  player isn't stuck waiting a full round just to try to shed their Cat,
-  but worth watching whether that's too permissive at the table.
+- **No turn timer for humans.** If a player disconnects mid-game their seat
+  is held for rejoin, but the game will sit waiting on their turn
+  indefinitely. Fine for a group in the same room; a problem for strangers.
+  Easiest fix if needed: auto-end a turn after N seconds.
+- **No persistence.** A Render restart (free-tier idle sleep counts) loses
+  any in-progress game. Fine for one-sitting playtests.
+- **`removeCat` isn't restricted to your own turn** — deliberate, so a
+  blocked player isn't stuck waiting a full round to shed a Cat. Worth
+  watching whether that's too permissive at the table.
+- **Bad-rat targeting is coarse.** Where a card fires "one rat" and a player
+  has both good and bad rats, the engine prefers firing a GOOD rat (harshest
+  reading). If you'd rather the victim chose, that's an engine change in
+  `resolveAttack`.
