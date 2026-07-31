@@ -24,9 +24,10 @@ const CAT_COUNT = 2;
 const REACT_TIMEOUT_MS = 20000;
 const TRAP_DECISION_TIMEOUT_MS = 15000;
 
-function newPlayer(id, name) {
+function newPlayer(id, name, isBot) {
   return {
     id, name,
+    isBot: !!isBot,
     hp: START_HP,
     hand: [],
     goodRats: [],           // array of {id, kind:'good', weight:1}
@@ -42,7 +43,7 @@ function newPlayer(id, name) {
 }
 
 function createGame(playerInfos) {
-  const players = playerInfos.map((p) => newPlayer(p.id, p.name));
+  const players = playerInfos.map((p) => newPlayer(p.id, p.name, p.isBot));
   return {
     players,
     order: players.map((p) => p.id),
@@ -303,6 +304,25 @@ function endTurn(game, playerId) {
   advanceActive(game);
   beginTurn(game);
   return { ok: true };
+}
+
+/**
+ * If the active player died DURING their own turn, nothing else advances
+ * the turn pointer — beginTurn only skips players who were already dead
+ * when it ran. Without this the game freezes permanently on a corpse.
+ * Safe to call after any mutation; no-ops when there's nothing to do.
+ */
+function ensureTurnPlayable(game) {
+  if (game.winner) return;
+  if (game.pendingAttack || game.pendingTrap) return;
+  let guard = 0;
+  while (guard++ < game.order.length + 1) {
+    const p = activePlayer(game);
+    if (p && p.alive) return;
+    advanceActive(game);
+    const next = activePlayer(game);
+    if (next && next.alive) { beginTurn(game); return; }
+  }
 }
 
 // ── win / lose ──────────────────────────────────────────────────────────
@@ -628,7 +648,7 @@ function publicView(game, forId) {
     discardCount: game.discard.length,
     log: game.log.slice(-30),
     players: game.players.map((p) => ({
-      id: p.id, name: p.name, hp: p.hp, alive: p.alive,
+      id: p.id, name: p.name, hp: p.hp, alive: p.alive, isBot: !!p.isBot,
       goodCount: p.goodRats.length, badCount: p.badRats.length,
       score: score(p), badScore: badScore(p),
       cats: p.cats, boltHoles: p.boltHoles, trapped: !!p.trapOwner,
@@ -640,7 +660,8 @@ function publicView(game, forId) {
 }
 
 module.exports = {
-  CARD_LABELS, ATTACK_CARDS, REACTIVE_CARDS,
+  CARD_LABELS, ATTACK_CARDS, REACTIVE_CARDS, newPlayer, score, badScore,
+  ensureTurnPlayable,
   createGame, startGame, playCard, endTurn, removeCat,
   respondToAttack, resolveAttack, resolveTrapDecision,
   publicView, findPlayer, activePlayer,
