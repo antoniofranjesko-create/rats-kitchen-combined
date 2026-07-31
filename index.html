@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rat's Kitchen — Combined (playtest)</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <section id="landing">
+      <h1>Rat's Kitchen — Combined</h1>
+      <p class="sub">Online playtest prototype · v5 ruleset</p>
+      <label>Your name<input id="nameInput" maxlength="16" placeholder="Koko"></label>
+      <div class="row">
+        <button id="createBtn">Create room</button>
+        <div class="or">or</div>
+        <input id="codeInput" maxlength="4" placeholder="CODE" style="text-transform:uppercase">
+        <button id="joinBtn">Join room</button>
+      </div>
+      <p id="landingError" class="error"></p>
+    </section>
+
+    <section id="lobby" class="hidden">
+      <h2>Room <span id="lobbyCode"></span></h2>
+      <ul id="lobbyList"></ul>
+      <button id="startBtn">Start game</button>
+      <p class="hint">2-8 players. Share the code above.</p>
+    </section>
+
+    <section id="game" class="hidden">
+      <div id="board"></div>
+      <div id="handArea">
+        <h3>Your hand</h3>
+        <div id="hand"></div>
+        <div id="actionBar">
+          <button id="endTurnBtn">End turn</button>
+        </div>
+      </div>
+      <div id="promptArea"></div>
+      <div id="log"></div>
+    </section>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>
