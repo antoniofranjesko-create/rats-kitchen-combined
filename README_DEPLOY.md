@@ -237,6 +237,55 @@ Current rules:
 If you add or change a card, change it **here** and all three consumers
 follow automatically.
 
+## Version number — check this first, every time
+
+The landing screen and lobby both show `build vX.Y.Z`, and `/version`
+returns it as JSON. **Check it before reporting a bug.** Browsers cache
+`client.js` aggressively and Render's free tier sleeps, so it's easy to test
+an old build and see bugs that are already fixed — hard-refresh, or open a
+private tab, and confirm the number matches what you just deployed.
+
+Current: **v0.5.0**. Bump `VERSION` in `game/engine.js` on every deploy.
+
+## Card text
+
+Full rules text for all 31 cards lives in `CARD_TEXT` in `game/deck.js`,
+next to the quantities — so text sits with the implementation rather than
+drifting in a separate client file. It's served to the browser as
+`/cardtext.js`, generated from that same object.
+
+In the UI: the one-line `short` text shows on the card face; tapping the **?**
+badge (or long-pressing the card) opens the full text. The info panel also
+appends, where relevant:
+- ⏳ whether the card expires at the start of your next turn
+- ⚡ whether it's a When Drawn card that resolves the instant it's drawn
+- ⚠️ whether it's **simplified** relative to the v5 design docs, and how
+- 🚫 why it can't be played right now, if it currently can't
+
+That last one means playtesters can always find out why a card is greyed
+out, rather than guessing.
+
+**Text describes the build, not the design doc.** Where the online version
+simplifies a card (The Sweep resolving immediately rather than arming for a
+turn; Gambit/Steak Out/Trash Diver as plain draws; Live Wire without the
+force-opponent option), the text says so explicitly so nobody judges a card
+by behaviour it doesn't yet have.
+
+## Fixed in v0.5.0
+
+- **You're no longer prompted to react when you hold no reactive card.**
+  Previously every attack opened a "Wok Block / Take it" prompt even with no
+  Wok Block, Sleeper or Snitch in hand — a decision with exactly one
+  possible answer. Attacks against a target with no reactive card now
+  resolve immediately.
+- **Bolt Hole, Territorial and Board Up now expire** at the start of your
+  next turn — one full lap of protection. Bolt Hole previously persisted
+  indefinitely until an inspection happened to consume it.
+- **Version number surfaced** in the UI (see above).
+- **Version delivery race fixed.** The server pushed the version on connect,
+  but the client could register its listener after the push had already
+  fired, leaving the tag blank. The client now also requests it explicitly.
+
 ## The bots
 
 Ported directly from the Python balance sim's heuristic policy — the same

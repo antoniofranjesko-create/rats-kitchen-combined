@@ -21,6 +21,18 @@ app.get("/legality.js", (_req, res) => {
 });
 
 app.get("/healthz", (_req, res) => res.send("ok"));
+app.get("/version", (_req, res) => res.json({ version: engine.VERSION }));
+
+// Card text is generated from game/deck.js — the SAME object the engine
+// uses — so rules text can't drift from the implementation.
+const deckDefs = require("./game/deck");
+app.get("/cardtext.js", (_req, res) => {
+  res.type("application/javascript");
+  res.send(
+    "window.RK_CARD_TEXT=" + JSON.stringify(deckDefs.CARD_TEXT) + ";\n" +
+    "window.RK_CARD_LABELS=" + JSON.stringify(deckDefs.CARD_LABELS) + ";"
+  );
+});
 
 const PORT = process.env.PORT || 3000;
 const MAX_SEATS = 8;
@@ -196,6 +208,9 @@ function scheduleBotWork(code) {
 io.on("connection", (socket) => {
   let code = null;
   let seatId = null;
+
+  socket.emit("version", { version: engine.VERSION });
+  socket.on("getVersion", (_p, cb) => cb && cb({ version: engine.VERSION }));
 
   function room() { return code ? rooms.get(code) : null; }
   function mySeat() {
