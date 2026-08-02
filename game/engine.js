@@ -15,6 +15,10 @@
  */
 
 const { buildDeck, shuffle, uid, REACTIVE_CARDS, WD_CARDS, CARD_LABELS } = require("./deck");
+
+// Bump this on every deploy so the homepage tells you whether the new build
+// actually went live (browsers aggressively cache client.js).
+const VERSION = "v0.5.0";
 const legality = require("./legality");
 
 const HAND_SIZE = 7;
@@ -34,7 +38,7 @@ function newPlayer(id, name, isBot) {
     goodRats: [],           // array of {id, kind:'good', weight:1}
     badRats: [],            // array of {id, kind:'bad'|'fat_bad', weight}
     cats: 0,                // Cats currently present in this kitchen
-    boltHoles: 0,           // Bolt Holes attached — absorb one HI hit each
+    boltHoles: 0,           // active Bolt Holes — expire at the start of your next turn
     trapOwner: null,        // playerId who set a trap on THIS kitchen
     shielded: false,        // Territorial/Board Up — blocks theft this round
     buns: 0,                // Bun in the Oven pending, matures next own turn
@@ -208,7 +212,14 @@ function beginTurn(game) {
     }
   }
 
+  // Timed effects expire at the START of your next turn, i.e. they cover
+  // exactly one full lap of the table. Bolt Hole used to persist forever
+  // until an inspection happened to consume it.
   p.shielded = false;
+  if (p.boltHoles > 0) {
+    push(game, `${p.name}'s Bolt Hole${p.boltHoles > 1 ? "s" : ""} expired.`);
+    p.boltHoles = 0;
+  }
 
   // draw 1
   const c = drawRaw(game);
@@ -388,6 +399,17 @@ function playCard(game, playerId, cardId, opts = {}) {
     game.pendingAttack = {
       attackerId: p.id, targetId: target.id, cardType: card.type, opts,
     };
+
+    // If the target holds NO reactive card, there is no decision to make —
+    // the only available answer is "take it", so asking is pure friction.
+    // Resolve straight away. (Bots skip the prompt for the same reason.)
+    const canReact = target.hand.some((c) => REACTIVE_CARDS.has(c.type));
+    if (!canReact) {
+      push(game, `${p.name} played ${CARD_LABELS[card.type]} on ${target.name}.`);
+      resolveAttack(game);
+      return { ok: true, pending: false };
+    }
+
     push(game, `${p.name} played ${CARD_LABELS[card.type]} on ${target.name} — waiting on a reaction.`);
     return { ok: true, pending: true };
   }
@@ -679,6 +701,7 @@ function publicView(game, forId) {
 }
 
 module.exports = {
+  VERSION,
   CARD_LABELS, ATTACK_CARDS, REACTIVE_CARDS, newPlayer, score, badScore,
   ensureTurnPlayable, legality,
   createGame, startGame, playCard, endTurn, removeCat,

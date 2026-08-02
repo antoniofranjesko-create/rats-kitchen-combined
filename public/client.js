@@ -18,16 +18,13 @@ const LABELS = {
   steak_out: "Steak Out", trash_diver: "Trash Diver", hot_chilli: "Hot Chilli",
   big_cheese: "Big Cheese", bun_in_oven: "Bun in the Oven", tag: "Tag",
 };
-const BLURB = {
-  hi: "Fires ALL rats in a kitchen", hcv: "Fires one rat", hot_ratato: "Steal or dump a rat",
-  wok_block: "Cancel an attack", sleeper: "Cancel + steal", bolt_hole: "Saves one rat from HI",
-  exterminator: "Clears a kitchen", the_sweep: "Clears one rat", territorial: "Blocks theft",
-  board_up: "Blocks theft", snitch: "Steal from attacker", rat_trap: "Catch the next drawn rat",
-  food: "Heal 1 HP / pay the Cat", kleptomaniac: "Steal a card", shakedown: "Take matching cards",
-  rat_pack: "Take their whole hand", switcheroo: "Swap kitchens", live_wire: "Draw 2",
-  gambit: "Draw", steak_out: "Draw", trash_diver: "Recover", hot_chilli: "Detonate a rat",
-  big_cheese: "Dig for rats", bun_in_oven: "A rat next turn", tag: "Redirect next HI",
-};
+// Card text comes from /cardtext.js, generated server-side from
+// game/deck.js — the same object the engine uses. Don't hardcode rules
+// text here; it would drift from the implementation.
+const TEXT = window.RK_CARD_TEXT || {};
+const BLURB = Object.fromEntries(
+  Object.entries(TEXT).map(([k, v]) => [k, v.short || ""])
+);
 const ATTACKS = new Set(["hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep"]);
 const REACTIVE = RKLegality.REACTIVE;
 // NOTE: legality now comes from the SHARED module (game/legality.js), the
@@ -63,6 +60,7 @@ function handle(res) { if (res && res.error) toast(res.error); }
 function openModal(title, body, options, { hideCancel = false, onCancel } = {}) {
   $("modalTitle").textContent = title;
   $("modalBody").textContent = body || "";
+  $("modalCancel").textContent = "Cancel";
   const wrap = $("modalOptions");
   wrap.innerHTML = "";
   options.forEach((o) => {
@@ -116,6 +114,18 @@ function showLobby() { showScreen("lobby"); $("lobbyCode").textContent = roomCod
 // ── lobby ────────────────────────────────────────────────────────────────
 $("addBotBtn").onclick = () => socket.emit("addBot", {}, handle);
 $("startBtn").onclick = () => socket.emit("startGame", {}, handle);
+
+let APP_VERSION = "?";
+function applyVersion(version) {
+  APP_VERSION = version;
+  const t = document.getElementById("versionTag");
+  if (t) t.textContent = "build " + version;
+  const l = document.getElementById("versionTagLobby");
+  if (l) l.textContent = "build " + version;
+}
+// Server also pushes it, but the push can lose a race against listener
+// registration on a fast connect — so we ALSO ask for it explicitly above.
+socket.on("version", ({ version }) => applyVersion(version));
 
 socket.on("lobby", (lob) => {
   hostId = lob.hostId;
@@ -243,18 +253,38 @@ function renderHand() {
     const playable = RKLegality.isPlayable(c.type, state, myId);
     const dead = !playable;
     const reason = dead ? RKLegality.whyNot(c.type, state, myId) : "";
+    const t = TEXT[c.type] || {};
     return `
-    <button class="card ${CARD_CLASS(c.type)}${dead ? " dead" : ""}"
-      data-cid="${c.id}" data-ctype="${c.type}" data-dead="${dead ? 1 : 0}"
-      data-reason="${esc(reason)}"
-      ${myTurn && !locked && playable ? "" : "disabled"}>
-      <span>${LABELS[c.type] || c.type}</span>
-      <span class="ctag">${dead ? esc(reason) : (BLURB[c.type] || "")}</span>
-    </button>`;
+    <div class="card-wrap">
+      <button class="card ${CARD_CLASS(c.type)}${dead ? " dead" : ""}"
+        data-cid="${c.id}" data-ctype="${c.type}" data-dead="${dead ? 1 : 0}"
+        data-reason="${esc(reason)}"
+        ${myTurn && !locked && playable ? "" : "disabled"}>
+        <span>${LABELS[c.type] || c.type}</span>
+        <span class="ctag">${dead ? esc(reason) : esc(t.short || "")}</span>
+      </button>
+      <button class="card-info" data-info="${c.type}" aria-label="Card info">?</button>
+    </div>`;
   }).join("");
 
   document.querySelectorAll("#hand .card").forEach((b) => {
-    b.onclick = () => onCardTap(b.dataset.cid, b.dataset.ctype);
+    const type = b.dataset.ctype;
+    b.onclick = () => onCardTap(b.dataset.cid, type);
+
+    // long-press (or right-click on desktop) opens full rules text
+    let pressTimer = null;
+    const startPress = () => {
+      pressTimer = setTimeout(() => { pressTimer = null; showCardInfo(type); }, 450);
+    };
+    const cancelPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+    b.addEventListener("touchstart", startPress, { passive: true });
+    b.addEventListener("touchend", cancelPress);
+    b.addEventListener("touchmove", cancelPress);
+    b.addEventListener("contextmenu", (e) => { e.preventDefault(); showCardInfo(type); });
+  });
+
+  document.querySelectorAll("#hand .card-info").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); showCardInfo(b.dataset.info); };
   });
   $("endTurnBtn").disabled = !myTurn || locked;
 }
@@ -267,6 +297,22 @@ function pickPlayer(title, body, list, cb) {
     sub: `${p.score}/3 good · ${p.badScore}/3 bad · ${p.hp} HP`,
     action: () => cb(p.id),
   })), { onCancel: () => {} });
+}
+
+function showCardInfo(type) {
+  const t = TEXT[type] || {};
+  const label = (window.RK_CARD_LABELS || {})[type] || LABELS[type] || type;
+  let body = t.full || "No description available.";
+  if (t.timed) body += "\n\n⏳ Lasts until the start of your next turn.";
+  if (t.whenDrawn) body += "\n\n⚡ When Drawn: resolves the instant it's drawn — you never hold it.";
+  if (t.simplified) body += "\n\n⚠️ Simplified in this build: " + t.simplified;
+
+  // legality reason, if it currently can't be played
+  if (state && !RKLegality.isPlayable(type, state, myId)) {
+    body += "\n\n🚫 Right now: " + RKLegality.whyNot(type, state, myId);
+  }
+  openModal(label, body, [], { onCancel: () => {} });
+  $("modalCancel").textContent = "Close";
 }
 
 function targetsFor(type, opts) {
@@ -376,6 +422,9 @@ function renderLog() {
 
 // ── auto-rejoin on refresh ───────────────────────────────────────────────
 socket.on("connect", () => {
+  socket.emit("getVersion", {}, (res) => {
+    if (res && res.version) applyVersion(res.version);
+  });
   const s = loadSession();
   if (s && s.roomCode && s.myId && !state) {
     socket.emit("joinRoom", { code: s.roomCode, name: s.name, rejoinId: s.myId }, (res) => {

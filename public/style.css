@@ -88,6 +88,10 @@ html, body {
 .btn-small { min-height: 36px; padding: 6px 14px; font-size: 14px; }
 
 .error { color: var(--bad); font-size: 14px; min-height: 20px; text-align: center; }
+.version {
+  text-align: center; font-size: 12px; color: var(--dim);
+  font-variant-numeric: tabular-nums; margin: 2px 0 0; letter-spacing: 0.5px;
+}
 .hint { color: var(--dim); font-size: 13px; text-align: center; }
 .label { color: var(--dim); font-size: 13px; margin: 0 0 4px; text-align: center; }
 
@@ -183,6 +187,17 @@ html, body {
 }
 .hand::-webkit-scrollbar { height: 4px; }
 .hand::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.card-wrap { position: relative; flex: 0 0 auto; scroll-snap-align: start; }
+.card-info {
+  position: absolute; top: 4px; right: 4px;
+  width: 22px; height: 22px; padding: 0;
+  border-radius: 50%; border: 1px solid var(--line);
+  background: rgba(0,0,0,0.45); color: var(--dim);
+  font-size: 12px; font-weight: 700; line-height: 1;
+  cursor: pointer; z-index: 2;
+}
+.card-info:active { background: var(--gold); color: #17120f; }
+
 .card {
   flex: 0 0 auto; scroll-snap-align: start;
   width: 104px; min-height: 76px;
@@ -230,7 +245,10 @@ html, body {
   padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
 }
 .modal-card h3 { margin: 0 0 6px; color: var(--gold); font-size: 19px; }
-.modal-body { margin: 0 0 14px; color: var(--dim); font-size: 14px; }
+.modal-body {
+  margin: 0 0 14px; color: var(--dim); font-size: 14px;
+  white-space: pre-wrap; line-height: 1.45;
+}
 .modal-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .opt {
   display: flex; align-items: center; gap: 10px;

@@ -16,6 +16,7 @@
     <div class="brand-rat">🐀</div>
     <h1>Rat's Kitchen</h1>
     <p class="tagline">Combined · playtest build</p>
+    <p id="versionTag" class="version">connecting…</p>
   </div>
   <input id="nameInput" class="field" maxlength="14" placeholder="Your name" autocomplete="off">
   <button id="createBtn" class="btn btn-primary btn-block">Create room</button>
@@ -40,6 +41,7 @@
   </div>
   <p id="lobbyError" class="error"></p>
   <p class="hint" id="hostHint"></p>
+  <p id="versionTagLobby" class="version"></p>
 </section>
 
 <!-- GAME -->
@@ -72,6 +74,7 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/legality.js"></script>
+<script src="/cardtext.js"></script>
 <script src="/client.js"></script>
 </body>
 </html>
