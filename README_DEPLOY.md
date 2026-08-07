@@ -245,7 +245,7 @@ returns it as JSON. **Check it before reporting a bug.** Browsers cache
 an old build and see bugs that are already fixed — hard-refresh, or open a
 private tab, and confirm the number matches what you just deployed.
 
-Current: **v0.5.0**. Bump `VERSION` in `game/engine.js` on every deploy.
+Current: **v0.7.0**. Bump `VERSION` in `game/engine.js` on every deploy.
 
 ## Card text
 
@@ -285,6 +285,98 @@ by behaviour it doesn't yet have.
 - **Version delivery race fixed.** The server pushed the version on connect,
   but the client could register its listener after the push had already
   fired, leaving the tag blank. The client now also requests it explicitly.
+
+## v0.6.0 — visual rewrite
+
+The previous UI was a test harness: grey boxes in a list, emoji, text
+labels. Fine for verifying logic, wrong for playtesting — you'd get
+reactions to the interface instead of the game. Rewritten. **The engine was
+not touched**; this is presentation only.
+
+**The concept comes from the subject.** In a professional kitchen, orders
+arrive as paper dockets clipped to a rail above the pass, under a heat lamp.
+So each player is a docket on the rail — and the heat lamp is the turn
+indicator. Whoever is on turn has their docket lit; everyone else sits in
+the dark. Turn order reads as light moving down the pass rather than a
+coloured border.
+
+- **Palette** — stainless steel in shadow (#0f1315 / #171d20 / #202a2e),
+  sodium-vapour amber for light and for your own crew (#ffb43d / #e8b04b),
+  a turned-food green for strays (#86a04f), inspector red (#e0313f).
+- **Type** — Anton for display (heavy condensed, market signage), Barlow
+  Condensed for labels and data, Barlow for body.
+- **Rats are drawn, not emoji** — a small inline SVG rat, filled when you
+  hold one and ghosted when you don't, so each docket shows progress toward
+  three at a glance rather than as a number.
+- **HP as burner rings** — lit hobs, dimming as you take damage.
+- **"On notice" is stamped** across the docket like a failed inspection
+  notice, rotated, with a stamp-down animation. It's the most dangerous
+  state in the game and now looks it.
+- **Cards look like cards** — coloured band by type (red attack, amber
+  defensive, green economy), name, and rules text on the face. Unplayable
+  cards go dashed and translucent with the reason printed where the
+  description would be, so a dead card explains itself without a tap.
+
+Verified in a real headless browser at 390×844: no console errors, no page
+errors, 8-player layout holds, and the legality text renders correctly
+(e.g. Health Inspection reading "Nobody has any rats to hit" and disabled
+on turn one). Regression re-run at 2P/4P/8P after the rewrite — all games
+still reach a winner.
+
+**Fonts load from Google Fonts** with system fallbacks. If you'd rather not
+depend on a third party, the fallbacks are already in the stack and it will
+degrade cleanly.
+
+## v0.7.0 — the attack-limit fix, renames, Baptism
+
+**Tested the specific worry directly before building anything.** Added
+burst/chain instrumentation to the Python sim and ran zone-restricted vs
+unrestricted across 3P/5P/8P, 300 games each. Aggregate pace (turns, term%,
+leads) barely moved either way — if that's all we'd measured, we'd have
+called it a non-issue. But the worst-case concentration of hits on one
+kitchen in a single turn TRIPLES with no limit (95th percentile: 1 → 3), and
+2-2.6% of all turns involve some kitchen getting hit twice or more — roughly
+1-2 such moments per game. Rare enough that aggregate stats miss it, frequent
+enough that someone at the table feels it. The specific worry (Hot Ratato
+strips a kitchen's good rats to the attacker, then HI cleans out what's
+left) doesn't even show up as HP burst — it's a resource-transfer problem,
+not a damage problem, which the instrumentation initially missed too.
+
+**Fix:** each kitchen can be hit by at most one attack card per turn;
+attack as many DIFFERENT kitchens as you like. This is the rule every
+sim result was already assuming — it had just never been built into the
+online prototype. One shared implementation in `game/legality.js`, so the
+server rejects it, bots never attempt it (their target lists just exclude
+already-hit kitchens), and the client greys out the option automatically —
+no separate logic to keep in sync three times.
+
+**No card text needed.** Stated once as a general rule for attack cards
+rather than repeated on every affected face — simpler and unambiguous.
+
+**Renamed:** Gambit → **Cook the Books** (mechanic unchanged; the name fits
+a peek-and-rig-the-draw effect better than it ever fit a plain draw).
+"Gambit" no longer exists as a card name anywhere.
+
+**New: Baptism** (2 copies). Discard 2 cards, turn one of your own ORDINARY
+bad rats (never a Fat Rat — that exclusion is deliberate, see the status
+doc on why fat-good-rats break pace) into a good rat. The only card that
+converts a rat's type outright. Which 2 cards get discarded isn't yet
+player-chosen — auto-picked by a simple priority hint and named in the log
+— flagged as a Phase 2 upgrade if you want real choice there.
+
+Found and fixed a real bug building this: Baptism resolves before being
+removed from its own player's hand, so its own self-referencing discard
+logic could pick ITSELF as one of its two cost cards, corrupting hand
+state. Fixed at the root — the engine now re-finds a played card's position
+after resolution rather than trusting a captured index, which also
+protects any future card that touches its own player's hand mid-resolution.
+Verified clean across 8 trials with randomized hand orderings.
+
+**Lore labels reverted.** "Crew"/"Strays" was my placeholder UI naming from
+the visual rewrite — not yet part of your lore. Replaced with neutral
+"Good"/"Bad" everywhere a player sees text, per your note that the good/bad
+split doesn't have settled flavor yet. Nothing on card faces implies
+ownership or gang framing until you decide that.
 
 ## The bots
 

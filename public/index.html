@@ -3,73 +3,85 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#17120f">
+<meta name="theme-color" content="#0f1315">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Rat's Kitchen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
-<!-- LANDING -->
+<!-- ══ LANDING ══ -->
 <section id="landing" class="screen">
-  <div class="brand">
-    <div class="brand-rat">🐀</div>
-    <h1>Rat's Kitchen</h1>
-    <p class="tagline">Combined · playtest build</p>
-    <p id="versionTag" class="version">connecting…</p>
+  <div class="sign">
+    <div class="sign-glow"></div>
+    <p class="sign-eyebrow">Service starts</p>
+    <h1 class="sign-title">RAT'S<br>KITCHEN</h1>
+    <div class="sign-rule"></div>
+    <p class="sign-sub">Get three good rats in. Don't get caught holding three bad ones.</p>
   </div>
-  <input id="nameInput" class="field" maxlength="14" placeholder="Your name" autocomplete="off">
-  <button id="createBtn" class="btn btn-primary btn-block">Create room</button>
-  <div class="divider"><span>or join</span></div>
-  <input id="codeInput" class="field field-code" maxlength="4" placeholder="CODE"
-         autocomplete="off" autocapitalize="characters" inputmode="text">
-  <button id="joinBtn" class="btn btn-block">Join room</button>
-  <p id="landingError" class="error"></p>
+
+  <div class="entry">
+    <label class="lbl" for="nameInput">Your name</label>
+    <input id="nameInput" class="field" maxlength="14" placeholder="Koko" autocomplete="off">
+    <button id="createBtn" class="btn btn-hot btn-block">Open a kitchen</button>
+    <div class="split"><span>or clock in</span></div>
+    <input id="codeInput" class="field field-code" maxlength="4" placeholder="CODE"
+           autocomplete="off" autocapitalize="characters" inputmode="text">
+    <button id="joinBtn" class="btn btn-block">Join</button>
+    <p id="landingError" class="error"></p>
+  </div>
+  <p id="versionTag" class="build">connecting…</p>
 </section>
 
-<!-- LOBBY -->
+<!-- ══ LOBBY ══ -->
 <section id="lobby" class="screen hidden">
-  <div class="lobby-head">
-    <p class="label">Room code</p>
-    <div id="lobbyCode" class="code-display"></div>
-    <p class="hint">Others join with this code. 2–8 players, bots fill the rest.</p>
-  </div>
+  <p class="lbl centre">Kitchen code</p>
+  <div id="lobbyCode" class="code-plate"></div>
+  <p class="hint">Read this out. Others tap <strong>Join</strong>.</p>
+
+  <div class="rail-head"><span>On the pass</span><span id="seatCount"></span></div>
   <div id="seatList" class="seat-list"></div>
+
   <div class="lobby-actions">
-    <button id="addBotBtn" class="btn btn-block">+ Add bot</button>
-    <button id="startBtn" class="btn btn-primary btn-block">Start game</button>
+    <button id="addBotBtn" class="btn btn-block">Add a bot</button>
+    <button id="startBtn" class="btn btn-hot btn-block">Start service</button>
   </div>
   <p id="lobbyError" class="error"></p>
   <p class="hint" id="hostHint"></p>
-  <p id="versionTagLobby" class="version"></p>
+  <p id="versionTagLobby" class="build"></p>
 </section>
 
-<!-- GAME -->
+<!-- ══ GAME ══ -->
 <section id="game" class="screen hidden">
   <header id="turnBar" class="turn-bar"></header>
-  <div id="kitchens" class="kitchens"></div>
-  <div id="logToggleWrap">
-    <button id="logToggle" class="btn btn-ghost btn-small">Show log</button>
+  <div id="dockets" class="dockets"></div>
+
+  <div class="log-wrap">
+    <button id="logToggle" class="btn btn-quiet btn-tiny">Service log</button>
+    <div id="log" class="log hidden"></div>
   </div>
-  <div id="log" class="log hidden"></div>
-  <div class="hand-dock">
+
+  <div class="dock">
     <div id="handMeta" class="hand-meta"></div>
     <div id="hand" class="hand"></div>
-    <button id="endTurnBtn" class="btn btn-primary btn-block">End turn</button>
+    <button id="endTurnBtn" class="btn btn-hot btn-block">End turn</button>
   </div>
 </section>
 
-<!-- MODAL -->
+<!-- ══ MODAL ══ -->
 <div id="modal" class="modal hidden">
-  <div class="modal-card">
+  <div class="sheet">
+    <div class="sheet-grip"></div>
     <h3 id="modalTitle"></h3>
-    <p id="modalBody" class="modal-body"></p>
-    <div id="modalOptions" class="modal-options"></div>
-    <button id="modalCancel" class="btn btn-ghost btn-block">Cancel</button>
+    <p id="modalBody" class="sheet-body"></p>
+    <div id="modalOptions" class="sheet-options"></div>
+    <button id="modalCancel" class="btn btn-quiet btn-block">Cancel</button>
   </div>
 </div>
 
-<!-- TOAST -->
 <div id="toast" class="toast hidden"></div>
 
 <script src="/socket.io/socket.io.js"></script>

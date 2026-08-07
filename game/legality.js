@@ -32,11 +32,13 @@
     if (!p) return null;
     const good = p.goodRats ? p.goodRats.length : (p.goodCount || 0);
     const bad = p.badRats ? p.badRats.length : (p.badCount || 0);
+    const badNormal = p.badRats ? p.badRats.filter((r) => r.kind === "bad").length
+      : (p.badNormalCount != null ? p.badNormalCount : bad);
     const hand = p.hand ? p.hand.length : (p.handCount || 0);
     return {
       id: p.id,
       alive: p.alive !== false,
-      good, bad, rats: good + bad,
+      good, bad, badNormal, rats: good + bad,
       hand,
       hp: p.hp,
       cats: p.cats || 0,
@@ -51,6 +53,15 @@
 
   function others(state, actorId) {
     return players(state).filter((p) => p.alive && p.id !== actorId);
+  }
+
+  /** Kitchens already hit by an attack card this turn — one per turn each. */
+  function alreadyHit(state) {
+    return new Set(state.attackedThisTurn || []);
+  }
+
+  function excludeHit(list, hit) {
+    return list.filter((p) => !hit.has(p.id));
   }
 
   function self(state, actorId) {
@@ -86,25 +97,25 @@
       case "exterminator":
       case "hot_chilli":
       case "the_sweep":
-        return opp.filter((p) => p.rats > 0).map((p) => p.id);
+        return excludeHit(opp.filter((p) => p.rats > 0), alreadyHit(state)).map((p) => p.id);
 
       // ── Hot Ratato has two distinct modes with different legality ─────
       case "hot_ratato": {
+        const hit = alreadyHit(state);
+        const opp2 = excludeHit(opp, hit);
         const mode = opts && opts.mode;
         if (mode === "dump") {
-          // need one of YOUR bad rats to dump
-          return me.bad > 0 ? opp.map((p) => p.id) : [];
+          return me.bad > 0 ? opp2.map((p) => p.id) : [];
         }
         if (mode === "steal") {
-          return opp.filter((p) => p.good > 0 && !p.shielded).map((p) => p.id);
+          return opp2.filter((p) => p.good > 0 && !p.shielded).map((p) => p.id);
         }
-        // no mode chosen yet: legal if EITHER mode has a legal target
-        const canSteal = opp.some((p) => p.good > 0 && !p.shielded);
-        const canDump = me.bad > 0 && opp.length > 0;
+        const canSteal = opp2.some((p) => p.good > 0 && !p.shielded);
+        const canDump = me.bad > 0 && opp2.length > 0;
         if (!canSteal && !canDump) return [];
         const ids = new Set();
-        if (canSteal) opp.filter((p) => p.good > 0 && !p.shielded).forEach((p) => ids.add(p.id));
-        if (canDump) opp.forEach((p) => ids.add(p.id));
+        if (canSteal) opp2.filter((p) => p.good > 0 && !p.shielded).forEach((p) => ids.add(p.id));
+        if (canDump) opp2.forEach((p) => ids.add(p.id));
         return [...ids];
       }
 
@@ -155,6 +166,9 @@
       case "bolt_hole":
         return me.rats > 0;
 
+      case "baptism":
+        return me.badNormal > 0 && me.hand >= 2;
+
       // Food always does something: heal, or feed the Cat, or discard.
       case "food":
         return true;
@@ -171,10 +185,22 @@
     if (!me) return "Unavailable";
     switch (type) {
       case "hi": case "hcv": case "exterminator":
-      case "hot_chilli": case "the_sweep":
+      case "hot_chilli": case "the_sweep": {
+        const hit = alreadyHit(state);
+        const withRats = opp.filter((p) => p.rats > 0);
+        if (withRats.length > 0 && withRats.every((p) => hit.has(p.id))) {
+          return "Already attacked every kitchen with rats this turn";
+        }
         return "Nobody has any rats to hit";
-      case "hot_ratato":
+      }
+      case "hot_ratato": {
+        const hit = alreadyHit(state);
+        const stealable = opp.filter((p) => p.good > 0 && !p.shielded);
+        if (stealable.length > 0 && stealable.every((p) => hit.has(p.id)) && me.bad === 0) {
+          return "Already attacked every kitchen you could steal from this turn";
+        }
         return me.bad > 0 ? "No good rats to steal" : "No good rats to steal, and no bad rats to dump";
+      }
       case "kleptomaniac": case "shakedown": case "rat_pack":
         return "Nobody's holding any cards";
       case "switcheroo":
@@ -183,6 +209,10 @@
         return "Every kitchen is already trapped";
       case "bolt_hole":
         return "You have no rats to protect";
+      case "baptism":
+        return me.badNormal === 0
+          ? "No ordinary bad rat to convert (Fat Rats don't count)"
+          : "Need 2 cards in hand to discard";
       default:
         return "Can't play this right now";
     }

@@ -1,51 +1,58 @@
 "use strict";
+/* RAT'S KITCHEN — client. Rendering only; all rules live server-side in
+   game/engine.js, and all legality in game/legality.js (served to us as
+   /legality.js so there is exactly ONE copy of the rules). */
+
 const socket = io();
 
-let myId = null;
-let roomCode = null;
-let hostId = null;
-let state = null;
+let myId = null, roomCode = null, hostId = null, state = null;
+let APP_VERSION = "?";
 
 const $ = (id) => document.getElementById(id);
 
-const LABELS = {
-  hi: "Health Inspection", hcv: "Health Code Violation", hot_ratato: "Hot Ratato",
-  wok_block: "Wok Block", sleeper: "Sleeper", bolt_hole: "Bolt Hole",
-  exterminator: "Exterminator", the_sweep: "The Sweep", territorial: "Territorial",
-  board_up: "Board Up", snitch: "Snitch", rat_trap: "Rat Trap", food: "Food",
-  kleptomaniac: "Kleptomaniac", shakedown: "Shakedown", rat_pack: "Rat Pack",
-  switcheroo: "Switcheroo", live_wire: "Live Wire", gambit: "Gambit",
-  steak_out: "Steak Out", trash_diver: "Trash Diver", hot_chilli: "Hot Chilli",
-  big_cheese: "Big Cheese", bun_in_oven: "Bun in the Oven", tag: "Tag",
-};
-// Card text comes from /cardtext.js, generated server-side from
-// game/deck.js — the same object the engine uses. Don't hardcode rules
-// text here; it would drift from the implementation.
+const LABELS = window.RK_CARD_LABELS || {};
 const TEXT = window.RK_CARD_TEXT || {};
-const BLURB = Object.fromEntries(
-  Object.entries(TEXT).map(([k, v]) => [k, v.short || ""])
-);
-const ATTACKS = new Set(["hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep"]);
 const REACTIVE = RKLegality.REACTIVE;
-// NOTE: legality now comes from the SHARED module (game/legality.js), the
-// same file the server and bots use. Don't reintroduce local rules here —
-// three divergent copies of "what's legal" is exactly what caused players
-// being attacked by cards that couldn't do anything.
-const CARD_CLASS = (t) =>
-  ATTACKS.has(t) ? "atk" : REACTIVE.has(t) || t === "bolt_hole" || t === "territorial" || t === "board_up"
-    ? "def" : "eco";
+const ATTACKS = new Set(["hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep"]);
+const DEFENSIVE = new Set(["wok_block", "sleeper", "snitch", "bolt_hole", "territorial", "board_up"]);
 
-// ── session persistence (survive a refresh mid-game) ────────────────────
+function cardClass(t) {
+  if (ATTACKS.has(t)) return "atk";
+  if (DEFENSIVE.has(t)) return "def";
+  return "eco";
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+/* a rat, drawn rather than an emoji — reads at 21px */
+function ratSVG(cls) {
+  return `<svg class="pip ${cls}" viewBox="0 0 26 16" fill="none" aria-hidden="true">
+    <path d="M5 10 Q1 10.5 1.6 5.5" stroke="currentColor" stroke-width="1.4"
+          stroke-linecap="round"/>
+    <ellipse cx="12" cy="9.6" rx="7" ry="4.7" fill="currentColor"/>
+    <circle cx="19.6" cy="7.6" r="3.5" fill="currentColor"/>
+    <circle cx="17.6" cy="3.7" r="2.1" fill="currentColor"/>
+    <circle cx="21.9" cy="7.2" r="0.8" fill="#0f1315"/>
+  </svg>`;
+}
+
+/* ── session ───────────────────────────────────────── */
 function saveSession() {
   try {
-    sessionStorage.setItem("rk", JSON.stringify({ roomCode, myId, name: $("nameInput").value }));
-  } catch (e) { /* private mode */ }
+    sessionStorage.setItem("rk", JSON.stringify({
+      roomCode, myId, name: ($("nameInput").value || "").trim(),
+    }));
+  } catch (e) { /* private browsing */ }
 }
 function loadSession() {
-  try { return JSON.parse(sessionStorage.getItem("rk") || "null"); } catch (e) { return null; }
+  try { return JSON.parse(sessionStorage.getItem("rk") || "null"); }
+  catch (e) { return null; }
 }
 
-// ── toast ────────────────────────────────────────────────────────────────
+/* ── toast ─────────────────────────────────────────── */
 let toastTimer = null;
 function toast(msg) {
   const t = $("toast");
@@ -56,119 +63,104 @@ function toast(msg) {
 }
 function handle(res) { if (res && res.error) toast(res.error); }
 
-// ── modal ────────────────────────────────────────────────────────────────
-function openModal(title, body, options, { hideCancel = false, onCancel } = {}) {
+/* ── sheet ─────────────────────────────────────────── */
+function openSheet(title, body, options, { hideCancel = false, cancelLabel = "Cancel", onCancel } = {}) {
   $("modalTitle").textContent = title;
   $("modalBody").textContent = body || "";
-  $("modalCancel").textContent = "Cancel";
   const wrap = $("modalOptions");
   wrap.innerHTML = "";
-  options.forEach((o) => {
+  (options || []).forEach((o) => {
     const b = document.createElement("button");
     b.className = "opt";
-    b.innerHTML = `<span class="opt-col"><span>${o.label}</span>${
-      o.sub ? `<span class="opt-sub">${o.sub}</span>` : ""}</span>`;
-    b.onclick = () => { closeModal(); o.action(); };
+    b.innerHTML = `<span class="opt-col"><span>${esc(o.label)}</span>${
+      o.sub ? `<span class="opt-sub">${esc(o.sub)}</span>` : ""
+    }${o.pips || ""}</span>`;
+    b.onclick = () => { closeSheet(); o.action(); };
     wrap.appendChild(b);
   });
-  // FORCED prompts (hideCancel: true) have no dismiss route other than
-  // picking one of the real options — this is what the freeze bug needed.
-  // The previous toggle logic here was broken (`cond ? false : false`
-  // always evaluates to "not hidden"), so Cancel was ALWAYS visible,
-  // including on the attack-reaction prompt, where tapping it closed the
-  // modal without ever telling the server — pendingAttack then sat forever
-  // with no client-side way to clear it.
-  $("modalCancel").classList.toggle("hidden", hideCancel);
-  $("modalCancel").onclick = () => { closeModal(); onCancel && onCancel(); };
+  const c = $("modalCancel");
+  c.textContent = cancelLabel;
+  c.classList.toggle("hidden", hideCancel);
+  c.onclick = () => { closeSheet(); onCancel && onCancel(); };
   $("modal").classList.remove("hidden");
 }
-function closeModal() { $("modal").classList.add("hidden"); }
+function closeSheet() { $("modal").classList.add("hidden"); }
 
-// ── landing ──────────────────────────────────────────────────────────────
+/* ── screens ───────────────────────────────────────── */
+function showScreen(id) {
+  ["landing", "lobby", "game"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
+}
+
+/* ── landing ───────────────────────────────────────── */
 $("createBtn").onclick = () => {
-  const name = ($("nameInput").value || "").trim() || "Player";
+  const name = ($("nameInput").value || "").trim() || "Chef";
   socket.emit("createRoom", { name }, (res) => {
     if (res.error) return ($("landingError").textContent = res.error);
     roomCode = res.code; myId = res.seatId; hostId = res.hostId;
     saveSession();
-    showLobby();
+    $("lobbyCode").textContent = roomCode;
+    showScreen("lobby");
   });
 };
+
 $("joinBtn").onclick = () => {
-  const name = ($("nameInput").value || "").trim() || "Player";
+  const name = ($("nameInput").value || "").trim() || "Chef";
   const code = ($("codeInput").value || "").trim().toUpperCase();
-  if (code.length !== 4) return ($("landingError").textContent = "Enter the 4-letter code");
+  if (code.length !== 4) return ($("landingError").textContent = "That code needs four letters");
   socket.emit("joinRoom", { code, name }, (res) => {
     if (res.error) return ($("landingError").textContent = res.error);
     roomCode = res.code; myId = res.seatId; hostId = res.hostId;
     saveSession();
-    showLobby();
+    $("lobbyCode").textContent = roomCode;
+    showScreen("lobby");
   });
 };
 
-function showScreen(id) {
-  ["landing", "lobby", "game"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
-}
-function showLobby() { showScreen("lobby"); $("lobbyCode").textContent = roomCode; }
-
-// ── lobby ────────────────────────────────────────────────────────────────
+/* ── lobby ─────────────────────────────────────────── */
 $("addBotBtn").onclick = () => socket.emit("addBot", {}, handle);
 $("startBtn").onclick = () => socket.emit("startGame", {}, handle);
-
-let APP_VERSION = "?";
-function applyVersion(version) {
-  APP_VERSION = version;
-  const t = document.getElementById("versionTag");
-  if (t) t.textContent = "build " + version;
-  const l = document.getElementById("versionTagLobby");
-  if (l) l.textContent = "build " + version;
-}
-// Server also pushes it, but the push can lose a race against listener
-// registration on a fast connect — so we ALSO ask for it explicitly above.
-socket.on("version", ({ version }) => applyVersion(version));
 
 socket.on("lobby", (lob) => {
   hostId = lob.hostId;
   const amHost = myId === hostId;
+  $("seatCount").textContent = `${lob.seats.length} / 8`;
   $("seatList").innerHTML = lob.seats.map((s) => `
-    <div class="seat">
-      <span class="seat-name">${esc(s.name)}${s.id === myId ? " (you)" : ""}</span>
-      ${s.isBot ? '<span class="seat-badge bot">BOT</span>' : ""}
-      ${s.id === lob.hostId ? '<span class="seat-badge host">HOST</span>' : ""}
-      ${!s.isBot && !s.connected ? '<span class="seat-badge off">OFFLINE</span>' : ""}
+    <div class="seat ${s.isBot ? "is-bot" : ""} ${s.id === myId ? "is-me" : ""}">
+      <span class="seat-name">${esc(s.name)}${s.id === myId ? " — you" : ""}</span>
+      ${s.isBot ? '<span class="pill bot">Bot</span>' : ""}
+      ${s.id === lob.hostId ? '<span class="pill host">Host</span>' : ""}
+      ${!s.isBot && !s.connected ? '<span class="pill gone">Away</span>' : ""}
       ${amHost && s.id !== lob.hostId
-        ? `<button class="seat-remove" data-remove="${s.id}">×</button>` : ""}
+        ? `<button class="seat-drop" data-drop="${s.id}" aria-label="Remove">×</button>` : ""}
     </div>`).join("");
-  document.querySelectorAll("[data-remove]").forEach((b) => {
-    b.onclick = () => socket.emit("removeSeat", { targetSeatId: b.dataset.remove }, handle);
+
+  document.querySelectorAll("[data-drop]").forEach((b) => {
+    b.onclick = () => socket.emit("removeSeat", { targetSeatId: b.dataset.drop }, handle);
   });
+
   $("addBotBtn").disabled = !amHost || lob.seats.length >= 8;
   $("startBtn").disabled = !amHost || lob.seats.length < 2;
   $("hostHint").textContent = amHost
-    ? `${lob.seats.length}/8 seats. Add bots to fill the table.`
-    : "Waiting for the host to start…";
+    ? (lob.seats.length < 2 ? "Add a bot or wait for someone to join." : "Ready when you are.")
+    : "Waiting for the host to start service.";
 });
 
-// ── game state ───────────────────────────────────────────────────────────
+/* ── game state ────────────────────────────────────── */
 socket.on("state", (st) => {
   state = st;
   showScreen("game");
   render();
 });
 
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-}
 function nameOf(id) {
   const p = state.players.find((x) => x.id === id);
-  return p ? p.name : "?";
+  return p ? p.name : "someone";
 }
 function me() { return state.players.find((p) => p.id === myId); }
 
 function render() {
   renderTurnBar();
-  renderKitchens();
+  renderDockets();
   renderHand();
   renderLog();
   renderPrompts();
@@ -177,53 +169,70 @@ function render() {
 function renderTurnBar() {
   const bar = $("turnBar");
   if (state.winner) {
-    bar.className = "turn-bar mine";
+    bar.className = "turn-bar won";
     bar.innerHTML = state.winner === "none"
-      ? "Everyone's out — no winner"
-      : `🏆 ${esc(nameOf(state.winner))} wins!`;
+      ? `<span class="turn-who">Kitchen closed</span><span class="turn-note">Nobody walked out with it</span>`
+      : `<span class="turn-who">${esc(nameOf(state.winner))} takes the kitchen</span>
+         <span class="turn-note">Service over</span>`;
     return;
   }
   const mine = state.activeId === myId;
   bar.className = "turn-bar" + (mine ? " mine" : "");
   bar.innerHTML = mine
-    ? `Your turn<span class="sub">Play cards, then end turn</span>`
-    : `${esc(nameOf(state.activeId))}'s turn<span class="sub">Waiting…</span>`;
+    ? `<span class="turn-who">You're on</span><span class="turn-note">Play what you can, then end turn</span>`
+    : `<span class="turn-who">${esc(nameOf(state.activeId))} is on</span><span class="turn-note">Hold tight</span>`;
 }
 
-function renderKitchens() {
-  $("kitchens").innerHTML = state.players.map((p) => {
-    const cls = [
-      "kitchen",
+function pipRow(label, count, cls, target) {
+  const pips = [];
+  for (let i = 0; i < target; i++) {
+    pips.push(i < count ? ratSVG(cls) : ratSVG(cls + " empty"));
+  }
+  const over = count > target ? `<span class="count">+${count - target}</span>` : "";
+  return `<div class="row">
+      <span class="row-lbl">${label}</span>
+      <span class="pips">${pips.join("")}${over}</span>
+    </div>`;
+}
+
+function renderDockets() {
+  $("dockets").innerHTML = state.players.map((p) => {
+    const cls = ["docket",
+      p.id === state.activeId && !state.winner ? "on" : "",
       p.id === myId ? "mine" : "",
-      p.id === state.activeId ? "active" : "",
-      p.alive ? "" : "dead",
+      p.alive ? "" : "out",
       p.pendingWin ? "notice" : "",
     ].filter(Boolean).join(" ");
-    return `
-    <div class="${cls}">
-      <div class="k-top">
-        <span class="k-name">${esc(p.name)}${p.id === myId ? " (you)" : ""}</span>
-        ${p.isBot ? '<span class="chip bot">BOT</span>' : ""}
-        <span class="k-hp">${"❤️".repeat(Math.max(p.hp, 0))}${"🖤".repeat(Math.max(3 - p.hp, 0))}</span>
+
+    const hp = [0, 1, 2].map((i) => `<i class="${i < p.hp ? "lit" : ""}"></i>`).join("");
+
+    const marks = [];
+    if (p.cats > 0) marks.push(`<span class="mark cat">Cat${p.cats > 1 ? " ×" + p.cats : ""}</span>`);
+    if (p.boltHoles > 0) marks.push(`<span class="mark hold">Bolt hole${p.boltHoles > 1 ? " ×" + p.boltHoles : ""}</span>`);
+    if (p.trapped) marks.push(`<span class="mark">Trap set</span>`);
+    if (p.shielded) marks.push(`<span class="mark hold">Boarded up</span>`);
+    if (p.buns > 0) marks.push(`<span class="mark">Bun in the oven</span>`);
+    marks.push(`<span class="mark">${p.handCount} in hand</span>`);
+
+    const catPay = (p.id === myId && p.cats > 0 && state.activeId === myId && !state.winner)
+      ? `<div class="cat-pay">
+           <button class="btn" data-cat="remove">1 food · send it off</button>
+           <button class="btn" data-cat="lure">2 food · send it to someone</button>
+         </div>` : "";
+
+    return `<div class="${cls}">
+      ${p.pendingWin ? '<span class="stamp">On notice</span>' : ""}
+      <div class="d-head">
+        <span class="d-name ${p.id === myId ? "d-you" : ""}">${esc(p.name)}</span>
+        ${p.isBot ? '<span class="pill bot">Bot</span>' : ""}
+        <span class="hp" title="Health">${hp}</span>
       </div>
-      <div class="k-scores">
-        <span class="k-good">🐀 good ${p.score}/3</span>
-        <span class="k-bad">☠️ bad ${p.badScore}/3</span>
+      <div class="tally">
+        ${pipRow("Good", p.score, "crew", 3)}
+        ${pipRow("Bad", p.badScore, "stray", 3)}
       </div>
-      <div class="k-tags">
-        ${p.pendingWin ? '<span class="chip notice">ON NOTICE</span>' : ""}
-        ${p.cats > 0 ? `<span class="chip cat">🐈 Cat ×${p.cats}</span>` : ""}
-        ${p.boltHoles > 0 ? `<span class="chip">🕳 Bolt Hole ×${p.boltHoles}</span>` : ""}
-        ${p.trapped ? '<span class="chip">🪤 trapped</span>' : ""}
-        ${p.shielded ? '<span class="chip">🛡 shielded</span>' : ""}
-        ${p.buns > 0 ? `<span class="chip">🍞 bun ×${p.buns}</span>` : ""}
-        <span class="chip">🖐 ${p.handCount}</span>
-      </div>
-      ${p.id === myId && p.cats > 0 && state.activeId === myId ? `
-        <div class="cat-actions">
-          <button class="btn" data-cat="remove">1 🍞 Remove Cat</button>
-          <button class="btn" data-cat="lure">2 🍞 Lure Cat</button>
-        </div>` : ""}
+      <div class="marks">${marks.join("")}</div>
+      ${catPay}
     </div>`;
   }).join("");
 
@@ -232,7 +241,7 @@ function renderKitchens() {
       if (b.dataset.cat === "remove") {
         socket.emit("removeCat", { method: "remove" }, handle);
       } else {
-        pickPlayer("Lure the Cat onto…", "They get the Cat in their kitchen.",
+        pickTarget("Send the cat where?", "It blocks every rat entering that kitchen.",
           state.players.filter((p) => p.alive && p.id !== myId),
           (id) => socket.emit("removeCat", { method: "lure", lureTargetId: id }, handle));
       }
@@ -240,129 +249,124 @@ function renderKitchens() {
   });
 }
 
+/* ── hand ──────────────────────────────────────────── */
 function renderHand() {
   const m = me();
-  const myTurn = state.activeId === myId && !state.winner;
-  const locked = !!state.pendingAttack || !!state.pendingTrap;
   const hand = (m && m.hand) || [];
+  const myTurn = state.activeId === myId && !state.winner;
+  const busy = !!state.pendingAttack || !!state.pendingTrap;
 
   $("handMeta").innerHTML =
-    `<span>Your hand · ${hand.length}</span><span>Deck ${state.deckCount}</span>`;
+    `<span>Your hand · ${hand.length}</span><span>${state.deckCount} left in the deck</span>`;
 
   $("hand").innerHTML = hand.map((c) => {
     const playable = RKLegality.isPlayable(c.type, state, myId);
-    const dead = !playable;
-    const reason = dead ? RKLegality.whyNot(c.type, state, myId) : "";
     const t = TEXT[c.type] || {};
-    return `
-    <div class="card-wrap">
-      <button class="card ${CARD_CLASS(c.type)}${dead ? " dead" : ""}"
-        data-cid="${c.id}" data-ctype="${c.type}" data-dead="${dead ? 1 : 0}"
-        data-reason="${esc(reason)}"
-        ${myTurn && !locked && playable ? "" : "disabled"}>
-        <span>${LABELS[c.type] || c.type}</span>
-        <span class="ctag">${dead ? esc(reason) : esc(t.short || "")}</span>
+    const why = playable ? "" : RKLegality.whyNot(c.type, state, myId);
+    return `<div class="slot">
+      <button class="pc ${cardClass(c.type)}${playable ? "" : " dead"}"
+        data-cid="${c.id}" data-ctype="${c.type}"
+        ${myTurn && !busy && playable ? "" : "disabled"}>
+        <span class="pc-band"></span>
+        <span class="pc-name">${esc(LABELS[c.type] || c.type)}</span>
+        <span class="pc-txt">${esc(playable ? (t.short || "") : why)}</span>
       </button>
-      <button class="card-info" data-info="${c.type}" aria-label="Card info">?</button>
+      <button class="pc-why" data-why="${c.type}" aria-label="What does this do?">?</button>
     </div>`;
   }).join("");
 
-  document.querySelectorAll("#hand .card").forEach((b) => {
+  document.querySelectorAll("#hand .pc").forEach((b) => {
     const type = b.dataset.ctype;
     b.onclick = () => onCardTap(b.dataset.cid, type);
-
-    // long-press (or right-click on desktop) opens full rules text
-    let pressTimer = null;
-    const startPress = () => {
-      pressTimer = setTimeout(() => { pressTimer = null; showCardInfo(type); }, 450);
-    };
-    const cancelPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
-    b.addEventListener("touchstart", startPress, { passive: true });
-    b.addEventListener("touchend", cancelPress);
-    b.addEventListener("touchmove", cancelPress);
-    b.addEventListener("contextmenu", (e) => { e.preventDefault(); showCardInfo(type); });
+    let timer = null;
+    const start = () => { timer = setTimeout(() => { timer = null; cardInfo(type); }, 430); };
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    b.addEventListener("touchstart", start, { passive: true });
+    b.addEventListener("touchend", stop);
+    b.addEventListener("touchmove", stop);
+    b.addEventListener("contextmenu", (e) => { e.preventDefault(); cardInfo(type); });
+  });
+  document.querySelectorAll("#hand .pc-why").forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); cardInfo(b.dataset.why); };
   });
 
-  document.querySelectorAll("#hand .card-info").forEach((b) => {
-    b.onclick = (e) => { e.stopPropagation(); showCardInfo(b.dataset.info); };
-  });
-  $("endTurnBtn").disabled = !myTurn || locked;
+  $("endTurnBtn").disabled = !myTurn || busy;
 }
 $("endTurnBtn").onclick = () => socket.emit("endTurn", {}, handle);
 
-function pickPlayer(title, body, list, cb) {
-  if (!list.length) return toast("No valid target");
-  openModal(title, body, list.map((p) => ({
-    label: p.name,
-    sub: `${p.score}/3 good · ${p.badScore}/3 bad · ${p.hp} HP`,
-    action: () => cb(p.id),
-  })), { onCancel: () => {} });
-}
-
-function showCardInfo(type) {
+function cardInfo(type) {
   const t = TEXT[type] || {};
-  const label = (window.RK_CARD_LABELS || {})[type] || LABELS[type] || type;
-  let body = t.full || "No description available.";
-  if (t.timed) body += "\n\n⏳ Lasts until the start of your next turn.";
-  if (t.whenDrawn) body += "\n\n⚡ When Drawn: resolves the instant it's drawn — you never hold it.";
-  if (t.simplified) body += "\n\n⚠️ Simplified in this build: " + t.simplified;
-
-  // legality reason, if it currently can't be played
+  let body = t.full || "No description yet.";
+  if (t.timed) body += "\n\nLasts until the start of your next turn.";
+  if (t.whenDrawn) body += "\n\nWhen Drawn — it resolves the instant it's drawn. You never hold it.";
+  if (t.simplified) body += "\n\nSimplified in this build: " + t.simplified;
   if (state && !RKLegality.isPlayable(type, state, myId)) {
-    body += "\n\n🚫 Right now: " + RKLegality.whyNot(type, state, myId);
+    body += "\n\nRight now: " + RKLegality.whyNot(type, state, myId);
   }
-  openModal(label, body, [], { onCancel: () => {} });
-  $("modalCancel").textContent = "Close";
+  openSheet(LABELS[type] || type, body, [], { cancelLabel: "Close" });
 }
 
+/* ── targeting ─────────────────────────────────────── */
 function targetsFor(type, opts) {
   const ids = RKLegality.legalTargets(type, state, myId, opts) || [];
   return state.players.filter((p) => ids.includes(p.id));
 }
 
+function pickTarget(title, body, list, cb) {
+  if (!list.length) return toast("Nobody to target");
+  openSheet(title, body, list.map((p) => ({
+    label: p.name,
+    sub: `${p.hp} health`,
+    pips: `<span class="mini-pips">${
+      [...Array(p.score)].map(() => ratSVG("crew")).join("")
+    }${
+      [...Array(p.badScore)].map(() => ratSVG("stray")).join("")
+    }</span>`,
+    action: () => cb(p.id),
+  })));
+}
+
 function onCardTap(cardId, type) {
-  if (REACTIVE.has(type)) {
-    return toast("Hold this — you'll be offered it when attacked");
-  }
+  if (REACTIVE.has(type)) return toast("Keep it — you'll be offered it when you're hit");
   if (!RKLegality.isPlayable(type, state, myId)) {
     return toast(RKLegality.whyNot(type, state, myId));
   }
 
   if (type === "food") {
-    return openModal("Food", "How do you want to use it?", [
-      { label: "Heal 1 HP", action: () => play(cardId, null, { use: "heal" }) },
-      { label: "Discard", sub: "Just get rid of it", action: () => play(cardId, null, { use: "discard" }) },
-    ], { onCancel: () => {} });
+    return openSheet("Food", "Feed yourself, or hold it back for the cat.", [
+      { label: "Heal 1 health", action: () => play(cardId, null, { use: "heal" }) },
+      { label: "Bin it", sub: "No effect", action: () => play(cardId, null, { use: "discard" }) },
+    ]);
   }
 
   if (type === "hot_ratato") {
-    const stealTargets = targetsFor(type, { mode: "steal" });
-    const dumpTargets = targetsFor(type, { mode: "dump" });
+    const steal = targetsFor(type, { mode: "steal" });
+    const dump = targetsFor(type, { mode: "dump" });
     const modes = [];
-    if (stealTargets.length) modes.push({
-      label: "Steal a good rat", sub: "Take one from their kitchen",
-      action: () => pickPlayer("Steal from…", "", stealTargets,
+    if (steal.length) modes.push({
+      label: "Take one of theirs", sub: "Steal a good rat",
+      action: () => pickTarget("Take from who?", "", steal,
         (id) => play(cardId, id, { mode: "steal" })),
     });
-    if (dumpTargets.length) modes.push({
-      label: "Dump a bad rat", sub: "Give one of yours away",
-      action: () => pickPlayer("Dump onto…", "", dumpTargets,
+    if (dump.length) modes.push({
+      label: "Palm off a bad rat", sub: "Move one of yours to them",
+      action: () => pickTarget("Give it to who?", "", dump,
         (id) => play(cardId, id, { mode: "dump" })),
     });
-    if (modes.length === 1) return modes[0].action();   // no pointless choice
-    return openModal("Hot Ratato", "Steal a good rat, or dump a bad one?",
-      modes, { onCancel: () => {} });
+    if (modes.length === 1) return modes[0].action();
+    return openSheet("Hot Ratato", "Two ways to play it.", modes);
   }
 
   if (type === "rat_trap") {
-    return pickPlayer("Set the trap on…",
-      "Catches the next rat they DRAW. You choose whether to keep it.",
+    return pickTarget("Set the trap where?",
+      "It catches the next rat they draw from the deck. You choose whether to keep it.",
       targetsFor(type), (id) => play(cardId, id, {}));
   }
 
   if (RKLegality.needsTarget(type)) {
-    return pickPlayer(LABELS[type] || type, BLURB[type] || "",
-      targetsFor(type), (id) => play(cardId, id, {}));
+    const t = TEXT[type] || {};
+    return pickTarget(LABELS[type] || type, t.short || "", targetsFor(type),
+      (id) => play(cardId, id, {}));
   }
 
   play(cardId, null, {});
@@ -372,65 +376,77 @@ function play(cardId, targetId, opts) {
   socket.emit("playCard", { cardId, targetId, opts }, handle);
 }
 
+/* ── forced prompts ────────────────────────────────── */
 function renderPrompts() {
   if (state.pendingAttack && state.pendingAttack.targetId === myId) {
     const m = me();
     const reacts = ((m && m.hand) || []).filter((c) => REACTIVE.has(c.type));
     const opts = reacts.map((c) => ({
-      label: LABELS[c.type],
-      sub: BLURB[c.type],
+      label: LABELS[c.type] || c.type,
+      sub: (TEXT[c.type] || {}).short || "",
       action: () => socket.emit("respondToAttack",
         { action: { type: "react", cardId: c.id } }, handle),
     }));
     opts.push({
-      label: "Take it",
-      sub: "Let the attack land",
+      label: "Take it", sub: "Let it land",
       action: () => socket.emit("respondToAttack", { action: { type: "pass" } }, handle),
     });
-    return openModal(
-      `Incoming ${LABELS[state.pendingAttack.cardType] || ""}`,
-      `From ${nameOf(state.pendingAttack.attackerId)}`, opts, { hideCancel: true });
+    return openSheet(
+      LABELS[state.pendingAttack.cardType] || "Incoming",
+      `${nameOf(state.pendingAttack.attackerId)} played it on you.`,
+      opts, { hideCancel: true });
   }
 
   if (state.pendingTrap && state.pendingTrap.trapOwnerId === myId) {
     const r = state.pendingTrap.rat || {};
-    const isGood = r.kind === "good";
-    return openModal("Your trap caught a rat!",
-      `${isGood ? "It's a GOOD rat 🐀" : "It's a BAD rat ☠️"} — from ${nameOf(state.pendingTrap.fromId)}`, [
-      { label: "Keep it", sub: isGood ? "Adds to your score" : "Counts toward losing!",
-        action: () => socket.emit("trapDecision", { keep: true }, handle) },
-      { label: "Let it go", sub: "Back under the deck",
-        action: () => socket.emit("trapDecision", { keep: false }, handle) },
-    ], { hideCancel: true });
+    const good = r.kind === "good";
+    return openSheet("Your trap sprung",
+      good
+        ? `One of the good ones, caught on its way into ${nameOf(state.pendingTrap.fromId)}'s kitchen.`
+        : `A bad rat, caught on its way into ${nameOf(state.pendingTrap.fromId)}'s kitchen.`,
+      [
+        { label: "Keep it", sub: good ? "Counts toward your three" : "Counts against you",
+          action: () => socket.emit("trapDecision", { keep: true }, handle) },
+        { label: "Let it go", sub: "Back under the deck",
+          action: () => socket.emit("trapDecision", { keep: false }, handle) },
+      ], { hideCancel: true });
   }
 
-  closeModal();
+  closeSheet();
 }
 
-// ── log ──────────────────────────────────────────────────────────────────
+/* ── log ───────────────────────────────────────────── */
 let logOpen = false;
 $("logToggle").onclick = () => {
   logOpen = !logOpen;
   $("log").classList.toggle("hidden", !logOpen);
-  $("logToggle").textContent = logOpen ? "Hide log" : "Show log";
+  $("logToggle").textContent = logOpen ? "Hide log" : "Service log";
+  if (logOpen) renderLog();
 };
 function renderLog() {
   if (!logOpen) return;
-  $("log").innerHTML = state.log.slice().reverse()
+  $("log").innerHTML = (state.log || []).slice().reverse()
     .map((l) => `<div>${esc(l)}</div>`).join("");
 }
 
-// ── auto-rejoin on refresh ───────────────────────────────────────────────
+/* ── version + rejoin ──────────────────────────────── */
+function applyVersion(v) {
+  APP_VERSION = v;
+  const a = $("versionTag"), b = $("versionTagLobby");
+  if (a) a.textContent = "build " + v;
+  if (b) b.textContent = "build " + v;
+}
+socket.on("version", ({ version }) => applyVersion(version));
+
 socket.on("connect", () => {
-  socket.emit("getVersion", {}, (res) => {
-    if (res && res.version) applyVersion(res.version);
-  });
+  socket.emit("getVersion", {}, (res) => { if (res && res.version) applyVersion(res.version); });
   const s = loadSession();
   if (s && s.roomCode && s.myId && !state) {
     socket.emit("joinRoom", { code: s.roomCode, name: s.name, rejoinId: s.myId }, (res) => {
       if (res && res.ok) {
         roomCode = res.code; myId = res.seatId; hostId = res.hostId;
-        if (!res.rejoined) showLobby();
+        $("lobbyCode").textContent = roomCode;
+        if (!res.rejoined) showScreen("lobby");
       }
     });
   }

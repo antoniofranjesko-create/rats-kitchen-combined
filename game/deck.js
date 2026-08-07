@@ -118,10 +118,10 @@ const CARD_TEXT = {
     full: "Draw 2 cards.",
     simplified: "The full card also allows forcing an OPPONENT to draw instead. Not yet built.",
   },
-  gambit: {
+  cook_the_books: {
     short: "Draw a card",
     full: "Draw a card.",
-    simplified: "The full card is peek-and-choose — look at several and pick. Resolves as a plain draw for now.",
+    simplified: "The full card is peek-and-choose — look at several and pick, rigging what you end up drawing. Resolves as a plain draw for now.",
   },
   steak_out: {
     short: "Draw a card",
@@ -132,6 +132,11 @@ const CARD_TEXT = {
     short: "Draw a card",
     full: "Draw a card.",
     simplified: "The full card recovers a chosen card from the discard pile. Needs a discard-browsing screen; resolves as a plain draw for now.",
+  },
+  baptism: {
+    short: "Turn a stray good",
+    full: "Discard 2 cards. One of your own BAD rats (not a Fat Rat) becomes a GOOD rat. The only way to convert a rat's type outright rather than moving, removing, or firing it.",
+    simplified: "Which 2 cards get discarded isn't yet chosen by you — the game picks your two lowest-value cards automatically and tells you which in the log. Full card-choice UI not yet built.",
   },
   wd_frenzy: { short: "Everyone draws", full: "Resolves the moment it's drawn: every player still in the game draws a card.", whenDrawn: true },
   wd_blackout: { short: "Redraw your hand", full: "Resolves on draw: you discard your entire hand and draw a fresh one.", whenDrawn: true },
@@ -160,9 +165,10 @@ const FIXED_CARDS = {
   rat_pack: 3,
   switcheroo: 1,
   live_wire: 3,          // STUB: draw-2 only; "force opponent to draw" not wired
-  gambit: 4,             // STUB: resolves as draw 1, not peek-and-choose
+  cook_the_books: 4,     // was "Gambit" — STUB: resolves as draw 1, not peek-and-choose
   steak_out: 3,          // STUB: resolves as draw 1, not peek-and-choose
   trash_diver: 1,        // STUB: no-op (needs discard-pile browsing UI)
+  baptism: 2,             // discard 2 cards, turn one of your bad rats good
   hot_chilli: 6,
   big_cheese: 3,
   bun_in_oven: 1,
@@ -194,9 +200,10 @@ const CARD_LABELS = {
   rat_pack: "Rat Pack",
   switcheroo: "Switcheroo",
   live_wire: "Live Wire",
-  gambit: "Gambit",
+  cook_the_books: "Cook the Books",
   steak_out: "Steak Out",
   trash_diver: "Trash Diver",
+  baptism: "Baptism",
   hot_chilli: "Hot Chilli",
   big_cheese: "Big Cheese",
   bun_in_oven: "Bun in the Oven",

@@ -18,8 +18,18 @@ const { buildDeck, shuffle, uid, REACTIVE_CARDS, WD_CARDS, CARD_LABELS } = requi
 
 // Bump this on every deploy so the homepage tells you whether the new build
 // actually went live (browsers aggressively cache client.js).
-const VERSION = "v0.5.0";
+const VERSION = "v0.7.0";
 const legality = require("./legality");
+
+// Used only by Baptism's auto-discard — keep it stupid-simple.
+const PRIORITY_HINT = {
+  food: 1, gambit: 1, cook_the_books: 1, steak_out: 1, trash_diver: 1,
+  live_wire: 2, kleptomaniac: 2, shakedown: 2, rat_pack: 2,
+  territorial: 3, board_up: 3, bolt_hole: 3, tag: 3,
+  hcv: 5, hot_ratato: 5, exterminator: 5, hot_chilli: 5, the_sweep: 5,
+  hi: 6, switcheroo: 6,
+  wok_block: 9, sleeper: 9, snitch: 9,   // never auto-discard reactive cards
+};
 
 const HAND_SIZE = 7;
 const START_HP = 3;
@@ -41,6 +51,7 @@ function newPlayer(id, name, isBot) {
     boltHoles: 0,           // active Bolt Holes — expire at the start of your next turn
     trapOwner: null,        // playerId who set a trap on THIS kitchen
     shielded: false,        // Territorial/Board Up — blocks theft this round
+    attackedThisTurn: new Set(),  // kitchens already hit this turn — one per kitchen
     buns: 0,                // Bun in the Oven pending, matures next own turn
     alive: true,
     pendingWin: false,      // on notice — one lap to survive
@@ -216,6 +227,7 @@ function beginTurn(game) {
   // exactly one full lap of the table. Bolt Hole used to persist forever
   // until an inspection happened to consume it.
   p.shielded = false;
+  p.attackedThisTurn = new Set();
   if (p.boltHoles > 0) {
     push(game, `${p.name}'s Bolt Hole${p.boltHoles > 1 ? "s" : ""} expired.`);
     p.boltHoles = 0;
@@ -394,6 +406,10 @@ function playCard(game, playerId, cardId, opts = {}) {
   if (ATTACK_CARDS.has(card.type)) {
     const target = findPlayer(game, opts.targetId);
     if (!target || !target.alive || target.id === p.id) return { error: "invalid target" };
+    if (p.attackedThisTurn.has(target.id)) {
+      return { error: "Already attacked that kitchen this turn — try a different one" };
+    }
+    p.attackedThisTurn.add(target.id);
     p.hand.splice(idx, 1);
     game.discard.push(card);
     game.pendingAttack = {
@@ -417,7 +433,13 @@ function playCard(game, playerId, cardId, opts = {}) {
   // non-attack cards resolve immediately
   const result = resolveNonAttack(game, p, card, opts);
   if (result.error) return result;
-  p.hand.splice(idx, 1);
+  // Re-find the card's CURRENT position rather than trusting `idx`, which
+  // was captured before resolveNonAttack ran. Most cards don't touch the
+  // player's own hand mid-resolution so idx would still be valid — but
+  // Baptism does (it discards 2 cards as its own cost), which can shift
+  // everything after it and make the original idx point at the wrong card.
+  const freshIdx = p.hand.findIndex((c) => c.id === card.id);
+  if (freshIdx !== -1) p.hand.splice(freshIdx, 1);
   game.discard.push(card);
   checkEnd(game);
   return { ok: true };
@@ -454,6 +476,29 @@ function resolveNonAttack(game, p, card, opts) {
       p.buns += 1;
       push(game, `${p.name} planted a Bun in the Oven.`);
       return {};
+    case "baptism": {
+      const idx2 = p.badRats.findIndex((r) => r.kind === "bad");   // never a Fat Rat
+      if (idx2 === -1) return { error: "No ordinary bad rat to convert" };
+      if (p.hand.length < 2) return { error: "Need 2 cards to discard" };
+      // auto-picks your two lowest-priority cards; see deck.js CARD_TEXT.baptism.
+      // MUST exclude the Baptism card itself (still in hand at this point,
+      // it's removed by the caller after this function returns) — without
+      // this it can discard itself as part of its own cost.
+      const byPriority = p.hand
+        .map((c, i) => ({ i, c, pri: c.id === card.id ? 99 : (PRIORITY_HINT[c.type] || 0) }))
+        .sort((a, b) => a.pri - b.pri)
+        .slice(0, 2)
+        .map((x) => x.i)
+        .sort((a, b) => b - a);
+      const discarded = byPriority.map((i) => p.hand.splice(i, 1)[0]);
+      game.discard.push(...discarded);
+      const rat = p.badRats.splice(idx2, 1)[0];
+      rat.kind = "good"; rat.weight = 1;
+      p.goodRats.push(rat);
+      push(game, `${p.name} played Baptism — a bad rat turned good ` +
+        `(discarded ${discarded.map((c) => CARD_LABELS[c.type] || c.type).join(", ")}).`);
+      return {};
+    }
     case "big_cheese": {
       for (let i = 0; i < 3; i++) {
         const c = drawRaw(game);
@@ -685,12 +730,14 @@ function publicView(game, forId) {
     tagRedirect: game.tagRedirect,
     pendingAttack: game.pendingAttack,
     pendingTrap: game.pendingTrap,
+    attackedThisTurn: [...(activePlayer(game)?.attackedThisTurn || [])],
     deckCount: game.deck.length,
     discardCount: game.discard.length,
     log: game.log.slice(-30),
     players: game.players.map((p) => ({
       id: p.id, name: p.name, hp: p.hp, alive: p.alive, isBot: !!p.isBot,
       goodCount: p.goodRats.length, badCount: p.badRats.length,
+      badNormalCount: p.badRats.filter((r) => r.kind === "bad").length,
       score: score(p), badScore: badScore(p),
       cats: p.cats, boltHoles: p.boltHoles, trapped: !!p.trapOwner,
       shielded: p.shielded, pendingWin: p.pendingWin, buns: p.buns,
