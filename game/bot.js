@@ -24,7 +24,7 @@ const PRIORITY = {
   bun_in_oven: 3.5,
   bolt_hole: 3,
   live_wire: 2.5,
-  gambit: 2,
+  cook_the_books: 2,
   steak_out: 2,
   trash_diver: 2,
   tag: 1.8,

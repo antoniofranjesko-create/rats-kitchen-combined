@@ -35,6 +35,20 @@ app.get("/cardtext.js", (_req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// LAST-RESORT SAFETY NET. Without this, ANY uncaught exception anywhere —
+// including in code paths the per-handler wrapper below doesn't cover,
+// like a bot's setTimeout callback — crashes the whole process, which
+// drops every connected player in every room simultaneously. This just
+// logs and keeps the server alive. It should never fire in practice once
+// the wrapper below is in place everywhere it needs to be; it exists for
+// whatever bug of this class hasn't been found yet.
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION (server stayed up):", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION (server stayed up):", err);
+});
 const MAX_SEATS = 8;
 const BOT_THINK_MS = parseInt(process.env.BOT_THINK_MS || "900", 10);  // watchable pace; lower for testing
 const BOT_REACT_MS = parseInt(process.env.BOT_REACT_MS || "700", 10);
@@ -49,6 +63,23 @@ const BOT_REACT_MS = parseInt(process.env.BOT_REACT_MS || "700", 10);
  * socket) or a bot. Same lobby model as the Turf Wars prototype.
  */
 const rooms = new Map();
+
+/** Wrap a socket handler so a bug in game logic returns an error to the
+ * one caller instead of crashing the process for every connected player.
+ * This is the fix for a real bug found in testing: an uncaught
+ * ReferenceError inside legality.js's whyNot() was one HI-with-no-rats
+ * play away from taking the whole server down for everyone in every room.
+ */
+function safe(fn) {
+  return (payload, cb) => {
+    try {
+      fn(payload, cb);
+    } catch (err) {
+      console.error("Handler error (server stayed up):", err);
+      cb && cb({ error: "Something went wrong on that action — try again." });
+    }
+  };
+}
 
 const BOT_NAMES = ["Scratch", "Nibbles", "Whiskers", "Grease", "Sniff", "Patch", "Twitch"];
 
@@ -218,7 +249,7 @@ io.on("connection", (socket) => {
     return r ? r.seats.find((s) => s.id === seatId) : null;
   }
 
-  socket.on("createRoom", ({ name }, cb) => {
+  socket.on("createRoom", safe(({ name }, cb) => {
     code = roomCode();
     seatId = "p_" + socket.id;
     const r = {
@@ -230,9 +261,9 @@ io.on("connection", (socket) => {
     socket.join(code);
     cb && cb({ ok: true, code, seatId, hostId: seatId });
     broadcastLobby(code);
-  });
+  }));
 
-  socket.on("joinRoom", ({ code: c, name, rejoinId }, cb) => {
+  socket.on("joinRoom", safe(({ code: c, name, rejoinId }, cb) => {
     const key = (c || "").toUpperCase();
     const r = rooms.get(key);
     if (!r) return cb && cb({ error: "Room not found" });
@@ -262,9 +293,9 @@ io.on("connection", (socket) => {
     socket.join(code);
     cb && cb({ ok: true, code, seatId, hostId: r.hostId });
     broadcastLobby(code);
-  });
+  }));
 
-  socket.on("addBot", (_payload, cb) => {
+  socket.on("addBot", safe((_payload, cb) => {
     const r = room();
     if (!r) return cb && cb({ error: "No room" });
     if (seatId !== r.hostId) return cb && cb({ error: "Only the host can add bots" });
@@ -278,9 +309,9 @@ io.on("connection", (socket) => {
     });
     cb && cb({ ok: true });
     broadcastLobby(code);
-  });
+  }));
 
-  socket.on("removeSeat", ({ targetSeatId }, cb) => {
+  socket.on("removeSeat", safe(({ targetSeatId }, cb) => {
     const r = room();
     if (!r) return cb && cb({ error: "No room" });
     if (seatId !== r.hostId) return cb && cb({ error: "Only the host can remove seats" });
@@ -289,9 +320,9 @@ io.on("connection", (socket) => {
     r.seats = r.seats.filter((s) => s.id !== targetSeatId);
     cb && cb({ ok: true });
     broadcastLobby(code);
-  });
+  }));
 
-  socket.on("startGame", (_payload, cb) => {
+  socket.on("startGame", safe((_payload, cb) => {
     const r = room();
     if (!r) return cb && cb({ error: "No room" });
     if (seatId !== r.hostId) return cb && cb({ error: "Only the host can start" });
@@ -301,25 +332,25 @@ io.on("connection", (socket) => {
     cb && cb({ ok: true });
     broadcastLobby(code);
     broadcastState(code);
-  });
+  }));
 
-  socket.on("playCard", ({ cardId, targetId, opts }, cb) => {
+  socket.on("playCard", safe(({ cardId, targetId, opts }, cb) => {
     const r = room();
     if (!r || !r.game) return cb && cb({ error: "No game" });
     const res = engine.playCard(r.game, seatId, cardId, { targetId, ...(opts || {}) });
     cb && cb(res);
     broadcastState(code);
-  });
+  }));
 
-  socket.on("respondToAttack", ({ action }, cb) => {
+  socket.on("respondToAttack", safe(({ action }, cb) => {
     const r = room();
     if (!r || !r.game) return cb && cb({ error: "No game" });
     const res = engine.respondToAttack(r.game, seatId, action);
     cb && cb(res);
     broadcastState(code);
-  });
+  }));
 
-  socket.on("trapDecision", ({ keep }, cb) => {
+  socket.on("trapDecision", safe(({ keep }, cb) => {
     const r = room();
     if (!r || !r.game) return cb && cb({ error: "No game" });
     if (!r.game.pendingTrap || r.game.pendingTrap.trapOwnerId !== seatId) {
@@ -328,23 +359,23 @@ io.on("connection", (socket) => {
     engine.resolveTrapDecision(r.game, keep);
     cb && cb({ ok: true });
     broadcastState(code);
-  });
+  }));
 
-  socket.on("removeCat", ({ method, lureTargetId }, cb) => {
+  socket.on("removeCat", safe(({ method, lureTargetId }, cb) => {
     const r = room();
     if (!r || !r.game) return cb && cb({ error: "No game" });
     const res = engine.removeCat(r.game, seatId, method, lureTargetId);
     cb && cb(res);
     broadcastState(code);
-  });
+  }));
 
-  socket.on("endTurn", (_payload, cb) => {
+  socket.on("endTurn", safe((_payload, cb) => {
     const r = room();
     if (!r || !r.game) return cb && cb({ error: "No game" });
     const res = engine.endTurn(r.game, seatId);
     cb && cb(res);
     broadcastState(code);
-  });
+  }));
 
   socket.on("disconnect", () => {
     const r = room();

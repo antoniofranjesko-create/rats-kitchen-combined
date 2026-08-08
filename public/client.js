@@ -333,10 +333,15 @@ function onCardTap(cardId, type) {
   }
 
   if (type === "food") {
-    return openSheet("Food", "Feed yourself, or hold it back for the cat.", [
-      { label: "Heal 1 health", action: () => play(cardId, null, { use: "heal" }) },
-      { label: "Bin it", sub: "No effect", action: () => play(cardId, null, { use: "discard" }) },
-    ]);
+    const m = me();
+    const atFull = m && m.hp >= 3;
+    const opts = [];
+    if (!atFull) {
+      opts.push({ label: "Heal 1 health", action: () => play(cardId, null, { use: "heal" }) });
+    }
+    opts.push({ label: "Bin it", sub: atFull ? "You're at full health" : "No effect",
+      action: () => play(cardId, null, { use: "discard" }) });
+    return openSheet("Food", "Feed yourself, or hold it back for the cat.", opts);
   }
 
   if (type === "hot_ratato") {

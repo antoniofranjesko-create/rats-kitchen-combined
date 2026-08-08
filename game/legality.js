@@ -183,6 +183,7 @@
     if (REACTIVE.has(type)) return "Save it — you'll be offered this when attacked";
     const me = self(state, actorId);
     if (!me) return "Unavailable";
+    const opp = others(state, actorId);
     switch (type) {
       case "hi": case "hcv": case "exterminator":
       case "hot_chilli": case "the_sweep": {

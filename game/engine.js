@@ -18,12 +18,12 @@ const { buildDeck, shuffle, uid, REACTIVE_CARDS, WD_CARDS, CARD_LABELS } = requi
 
 // Bump this on every deploy so the homepage tells you whether the new build
 // actually went live (browsers aggressively cache client.js).
-const VERSION = "v0.7.0";
+const VERSION = "v0.8.0";
 const legality = require("./legality");
 
 // Used only by Baptism's auto-discard — keep it stupid-simple.
 const PRIORITY_HINT = {
-  food: 1, gambit: 1, cook_the_books: 1, steak_out: 1, trash_diver: 1,
+  food: 1, cook_the_books: 1, steak_out: 1, trash_diver: 1,
   live_wire: 2, kleptomaniac: 2, shakedown: 2, rat_pack: 2,
   territorial: 3, board_up: 3, bolt_hole: 3, tag: 3,
   hcv: 5, hot_ratato: 5, exterminator: 5, hot_chilli: 5, the_sweep: 5,
@@ -458,6 +458,9 @@ function resolveNonAttack(game, p, card, opts) {
       return {};
     case "food": {
       if (opts.use === "heal") {
+        if (p.hp >= START_HP) {
+          return { error: "Already at full health — nothing to heal" };
+        }
         p.hp = Math.min(START_HP, p.hp + 1);
         push(game, `${p.name} healed 1 HP.`);
       } else {
@@ -549,7 +552,7 @@ function resolveNonAttack(game, p, card, opts) {
       return {};
     }
     case "live_wire":
-    case "gambit":
+    case "cook_the_books":
     case "steak_out":
     case "trash_diver": {
       // SIMPLIFIED — see README_DEPLOY.md Phase 2

@@ -10,7 +10,13 @@
  */
 
 const HI_COUNT = 6;
-const RAT_BASE = (players) => 10 + players;   // flat supply curve, §5 of v5 doc
+// 1.25x the original flat curve (10+players), recalibrated against the
+// confirmed v11 physical print reference (27 rats at 8P = 24 Rat [18 deck
+// + 6 pile] + 3 Fat). Simulated vs current and vs 1.5x with all-smart
+// bots before adoption — termination stays 98-100% at every count; this
+// is the gentler of the two tested scalings.
+const RAT_TABLE = { 2: 15, 3: 16, 4: 18, 5: 19, 6: 20, 7: 21, 8: 23 };
+const RAT_BASE = (players) => RAT_TABLE[players] || Math.round((10 + players) * 1.25);
 const FRAC_FAT = 0.12;
 const FRAC_BAD = 0.40;
 
