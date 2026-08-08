@@ -13,7 +13,6 @@ const REACTIVE = legality.REACTIVE;
 // higher = played sooner. 0 or absent = never played proactively.
 const PRIORITY = {
   hi: 9,
-  switcheroo: 8,
   hcv: 7,
   rat_trap: 6.8,
   hot_ratato: 6.5,
@@ -30,7 +29,6 @@ const PRIORITY = {
   tag: 1.8,
   kleptomaniac: 1.5,
   shakedown: 1.5,
-  rat_pack: 1.5,
   territorial: 1,
   board_up: 1,
   food: 0.1,   // held for healing / Cat removal
@@ -45,11 +43,21 @@ function badScore(p) {
 
 function pickFrom(pool) {
   if (!pool.length) return null;
-  return pool.reduce((best, p) => {
+  // Collect every candidate tied for "most threatening" rather than just
+  // keeping the first one seen — a strict > comparison meant that when
+  // scores were tied (the common state early game, when nobody has rats
+  // yet), every bot deterministically converged on whichever player
+  // happened to sit first in the array. That produced exactly what looks
+  // like every bot piling onto one player — not strategy, not collusion,
+  // just array order. Ties now break randomly instead.
+  let bestVal = -Infinity;
+  let ties = [];
+  for (const p of pool) {
     const v = score(p) * 2 + p.goodRats.length * 0.5;
-    const bv = score(best) * 2 + best.goodRats.length * 0.5;
-    return v > bv ? p : best;
-  });
+    if (v > bestVal) { bestVal = v; ties = [p]; }
+    else if (v === bestVal) { ties.push(p); }
+  }
+  return ties[Math.floor(Math.random() * ties.length)];
 }
 
 /** Pick the most threatening opponent: closest to winning, then most rats. */

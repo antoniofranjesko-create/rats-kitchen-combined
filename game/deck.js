@@ -99,14 +99,6 @@ const CARD_TEXT = {
     short: "Take every copy of one card",
     full: "Choose an opponent holding cards. Name a card type — you take every copy of it from their hand.",
   },
-  rat_pack: {
-    short: "Take their entire hand",
-    full: "Choose an opponent holding cards. You take their whole hand.",
-  },
-  switcheroo: {
-    short: "Swap kitchens with someone",
-    full: "Exchange your entire kitchen — good rats and bad rats both — with an opponent's. Only playable against a kitchen that differs from yours.",
-  },
   tag: {
     short: "Redirect the next inspection",
     full: "Mark an opponent. The next Health Inspection played by anyone is redirected onto them instead of its original target.",
@@ -168,8 +160,6 @@ const FIXED_CARDS = {
   food: 12,
   kleptomaniac: 3,
   shakedown: 3,
-  rat_pack: 3,
-  switcheroo: 1,
   live_wire: 3,          // STUB: draw-2 only; "force opponent to draw" not wired
   cook_the_books: 4,     // was "Gambit" — STUB: resolves as draw 1, not peek-and-choose
   steak_out: 3,          // STUB: resolves as draw 1, not peek-and-choose
@@ -203,8 +193,6 @@ const CARD_LABELS = {
   food: "Food",
   kleptomaniac: "Kleptomaniac",
   shakedown: "Shakedown",
-  rat_pack: "Rat Pack",
-  switcheroo: "Switcheroo",
   live_wire: "Live Wire",
   cook_the_books: "Cook the Books",
   steak_out: "Steak Out",

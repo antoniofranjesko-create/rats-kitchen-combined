@@ -72,8 +72,8 @@
   function needsTarget(type, opts) {
     switch (type) {
       case "hi": case "hcv": case "exterminator": case "hot_chilli":
-      case "the_sweep": case "hot_ratato": case "switcheroo": case "tag":
-      case "kleptomaniac": case "shakedown": case "rat_pack": case "rat_trap":
+      case "the_sweep": case "hot_ratato": case "tag":
+      case "kleptomaniac": case "shakedown": case "rat_trap":
         return true;
       default:
         return false;
@@ -122,14 +122,9 @@
       // ── hand theft: target must actually hold cards ───────────────────
       case "kleptomaniac":
       case "shakedown":
-      case "rat_pack":
-        return opp.filter((p) => p.hand > 0).map((p) => p.id);
-
-      // ── Switcheroo: pointless swapping with an identical kitchen, but
-      //    swapping with anyone is a legitimate call. Require only that
-      //    SOMETHING differs, so it can't be burned for literally nothing.
-      case "switcheroo":
-        return opp.filter((p) => p.good !== me.good || p.bad !== me.bad).map((p) => p.id);
+        // v11's design groups these into the same "attack set" as HI/HCV/
+        // Hot Ratato — one per kitchen per turn applies here too.
+        return excludeHit(opp.filter((p) => p.hand > 0), alreadyHit(state)).map((p) => p.id);
 
       // ── Tag: redirects the next HI. Only meaningful if someone could
       //    plausibly be hit, but it's a forward-looking card — any
@@ -202,10 +197,8 @@
         }
         return me.bad > 0 ? "No good rats to steal" : "No good rats to steal, and no bad rats to dump";
       }
-      case "kleptomaniac": case "shakedown": case "rat_pack":
+      case "kleptomaniac": case "shakedown":
         return "Nobody's holding any cards";
-      case "switcheroo":
-        return "No kitchen different from yours";
       case "rat_trap":
         return "Every kitchen is already trapped";
       case "bolt_hole":

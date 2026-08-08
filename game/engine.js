@@ -18,16 +18,16 @@ const { buildDeck, shuffle, uid, REACTIVE_CARDS, WD_CARDS, CARD_LABELS } = requi
 
 // Bump this on every deploy so the homepage tells you whether the new build
 // actually went live (browsers aggressively cache client.js).
-const VERSION = "v0.8.0";
+const VERSION = "v0.9.0";
 const legality = require("./legality");
 
 // Used only by Baptism's auto-discard — keep it stupid-simple.
 const PRIORITY_HINT = {
   food: 1, cook_the_books: 1, steak_out: 1, trash_diver: 1,
-  live_wire: 2, kleptomaniac: 2, shakedown: 2, rat_pack: 2,
+  live_wire: 2, kleptomaniac: 2, shakedown: 2,
   territorial: 3, board_up: 3, bolt_hole: 3, tag: 3,
   hcv: 5, hot_ratato: 5, exterminator: 5, hot_chilli: 5, the_sweep: 5,
-  hi: 6, switcheroo: 6,
+  hi: 6,
   wok_block: 9, sleeper: 9, snitch: 9,   // never auto-discard reactive cards
 };
 
@@ -378,7 +378,22 @@ function checkEnd(game) {
 }
 
 // ── cards ────────────────────────────────────────────────────────────────
-const ATTACK_CARDS = new Set(["hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep"]);
+const ATTACK_CARDS = new Set([
+  "hi", "hcv", "hot_ratato", "exterminator", "hot_chilli", "the_sweep",
+  // v11's design explicitly groups these into the same "attack set" —
+  // MASTER_CONTEXT_v11_appendix.md: "Attack set = Health Inspection,
+  // Health Code Violation, Hot Ratato, Kleptomaniac, Shakedown, Rat Pack,
+  // Hot Chilli." Combined's build had left these three out, meaning they
+  // were exempt from the one-attack-per-kitchen-per-turn rule AND
+  // uncancellable by Wok Block/Sleeper — both were errors, not intended
+  // design.
+  //
+  // Rat Pack itself (steal the target's entire hand in one card) has
+  // since been REMOVED entirely — Koko's call, regardless of the attack-
+  // set fix above. Kleptomaniac and Shakedown remain, both still
+  // correctly gated by this same set.
+  "kleptomaniac", "shakedown",
+]);
 
 function playCard(game, playerId, cardId, opts = {}) {
   const p = activePlayer(game);
@@ -512,14 +527,6 @@ function resolveNonAttack(game, p, card, opts) {
       push(game, `${p.name} played Big Cheese.`);
       return {};
     }
-    case "switcheroo": {
-      const target = findPlayer(game, opts.targetId);
-      if (!target || !target.alive || target.id === p.id) return { error: "invalid target" };
-      [p.goodRats, target.goodRats] = [target.goodRats, p.goodRats];
-      [p.badRats, target.badRats] = [target.badRats, p.badRats];
-      push(game, `${p.name} swapped kitchens with ${target.name}.`);
-      return {};
-    }
     case "tag": {
       const target = findPlayer(game, opts.targetId);
       if (!target || !target.alive) return { error: "invalid target" };
@@ -527,30 +534,8 @@ function resolveNonAttack(game, p, card, opts) {
       push(game, `${p.name} tagged ${target.name} — next Health Inspection redirects here.`);
       return {};
     }
-    case "kleptomaniac": {
-      const target = findPlayer(game, opts.targetId);
-      if (!target || !target.alive || !target.hand.length) return { error: "invalid target" };
-      const i = Math.floor(Math.random() * target.hand.length);
-      p.hand.push(target.hand.splice(i, 1)[0]);
-      push(game, `${p.name} pickpocketed ${target.name}.`);
-      return {};
-    }
-    case "shakedown":
-    case "rat_pack": {
-      const target = findPlayer(game, opts.targetId);
-      if (!target || !target.alive) return { error: "invalid target" };
-      if (card.type === "rat_pack") {
-        p.hand.push(...target.hand.splice(0));
-      } else {
-        if (!target.hand.length) return { error: "target hand is empty" };
-        const name = target.hand[0].type;
-        const matches = target.hand.filter((c) => c.type === name);
-        target.hand = target.hand.filter((c) => c.type !== name);
-        p.hand.push(...matches);
-      }
-      push(game, `${p.name} ran a ${CARD_LABELS[card.type]} on ${target.name}.`);
-      return {};
-    }
+    // kleptomaniac, shakedown moved to resolveAttack() below — see the
+    // ATTACK_CARDS comment for why. (rat_pack itself was removed.)
     case "live_wire":
     case "cook_the_books":
     case "steak_out":
@@ -688,6 +673,22 @@ function resolveAttack(game) {
       } else {
         push(game, "Hot Ratato had nothing to take.");
       }
+      break;
+    }
+    case "kleptomaniac": {
+      if (!target.hand.length) { push(game, "Kleptomaniac found nothing to take."); break; }
+      const i = Math.floor(Math.random() * target.hand.length);
+      attacker.hand.push(target.hand.splice(i, 1)[0]);
+      push(game, `${attacker.name} pickpocketed ${target.name}.`);
+      break;
+    }
+    case "shakedown": {
+      if (!target.hand.length) { push(game, "Shakedown found nothing to take."); break; }
+      const name = target.hand[0].type;
+      const matches = target.hand.filter((c) => c.type === name);
+      target.hand = target.hand.filter((c) => c.type !== name);
+      attacker.hand.push(...matches);
+      push(game, `${attacker.name} ran a Shakedown on ${target.name}.`);
       break;
     }
     case "exterminator": {
